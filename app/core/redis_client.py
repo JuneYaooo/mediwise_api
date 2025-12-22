@@ -20,8 +20,8 @@ class RedisClient:
             async with self._lock:
                 if self._redis is None:
                     redis_host = os.getenv("REDIS_HOST", "localhost")
-                    redis_port = int(os.getenv("REDIS_PORT", "6255"))
-                    redis_db = int(os.getenv("REDIS_DB", "3"))
+                    redis_port = int(os.getenv("REDIS_PORT", "36379"))
+                    redis_db = int(os.getenv("REDIS_DB", "0"))
                     redis_password = os.getenv("REDIS_PASSWORD")
                     
                     connection_kwargs = {

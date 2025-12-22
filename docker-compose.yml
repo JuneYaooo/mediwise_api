@@ -1,6 +1,22 @@
 version: '3.8'
 
 services:
+  # Redis 服务
+  redis:
+    image: redis:7-alpine
+    container_name: mediwise-redis
+    restart: unless-stopped
+    ports:
+      - "36379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
   # MediWise API 服务
   api:
     build:
@@ -14,7 +30,7 @@ services:
     environment:
       # Redis 配置（使用 host 上的 Redis）
       - REDIS_HOST=localhost
-      - REDIS_PORT=6444
+      - REDIS_PORT=36379
       # 服务器配置
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=9527
@@ -31,3 +47,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis-data:

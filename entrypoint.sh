@@ -7,7 +7,7 @@ echo "=========================================="
 
 # 等待 Redis 可用
 echo "⏳ Waiting for Redis..."
-until redis-cli -h ${REDIS_HOST:-redis} -p ${REDIS_PORT:-6379} ping > /dev/null 2>&1; do
+until redis-cli -h ${REDIS_HOST:-redis} -p ${REDIS_PORT:-36379} ping > /dev/null 2>&1; do
   echo "   Redis is unavailable - sleeping"
   sleep 2
 done
