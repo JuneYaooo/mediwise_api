@@ -1,0 +1,658 @@
+"""
+Patient Detail Model Helpers
+用于处理患者数据的序列化和反序列化
+桥接到新的业务表（bus_*）
+"""
+import json
+from typing import Dict, List, Any, Optional
+from sqlalchemy.orm import Session
+from src.utils.logger import BeijingLogger
+
+# 导入新的业务Helper
+from app.models.bus_patient_helpers import BusPatientHelper
+from app.models.bus_models import PatientStructuredData
+
+logger = BeijingLogger().get_logger()
+
+
+class PatientDetailHelper:
+    """
+    PatientDetail 模型的辅助类
+    现在桥接到 bus_patient_structured_data 表
+    """
+
+    @staticmethod
+    def create_patient_detail(
+        db: Session,
+        conversation_id: str,
+        raw_text_data: Optional[str] = None,
+        raw_files_data: Optional[List[Dict[str, Any]]] = None,
+        raw_file_ids: Optional[List[str]] = None,
+        patient_timeline: Optional[Dict[str, Any]] = None,
+        patient_journey: Optional[Dict[str, Any]] = None,
+        mdt_simple_report: Optional[Dict[str, Any]] = None,
+        patient_full_content: Optional[str] = None,
+        extraction_statistics: Optional[Dict[str, Any]] = None
+    ):
+        """
+        创建新的患者详情记录（写入bus_*表）
+
+        注意：这个方法现在会：
+        1. 从conversation_id查询patient_id和user_id
+        2. 调用BusPatientHelper保存结构化数据到bus_patient_structured_data表
+        3. 如果有文件数据，保存到bus_patient_files表
+        """
+
+        logger.info(f"开始保存患者详情数据到bus_*表, conversation_id: {conversation_id}")
+
+        try:
+            # 1. 从conversation_id查询patient_id和user_id
+            from app.models.bus_models import PatientConversation
+            conversation = db.query(PatientConversation).filter(
+                PatientConversation.id == conversation_id
+            ).first()
+
+            if not conversation:
+                raise ValueError(f"找不到会话记录: {conversation_id}")
+
+            patient_id = conversation.patient_id
+            user_id = conversation.user_id
+
+            logger.info(f"找到会话记录 - patient_id: {patient_id}, user_id: {user_id}")
+
+            # 2. 保存结构化数据
+            BusPatientHelper.save_structured_data(
+                db=db,
+                patient_id=patient_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                patient_timeline=patient_timeline,
+                patient_journey=patient_journey,
+                mdt_simple_report=mdt_simple_report,
+                patient_full_content=patient_full_content,
+                source_file_ids=raw_file_ids
+            )
+
+            # 3. 如果有文件数据，保存文件记录
+            if raw_files_data:
+                BusPatientHelper.save_patient_files(
+                    db=db,
+                    patient_id=patient_id,
+                    user_id=user_id,
+                    files_data=raw_files_data
+                )
+
+            db.commit()
+            logger.info(f"患者详情数据保存成功 - conversation_id: {conversation_id}")
+
+        except Exception as e:
+            db.rollback()
+            logger.error(f"保存患者详情数据失败: {str(e)}")
+            raise
+    
+    @staticmethod
+    def get_patient_detail_by_conversation_id(
+        db: Session,
+        conversation_id: str
+    ):
+        """根据conversation_id获取患者详情（从bus_patient_structured_data查询）"""
+
+        # 查询该会话的所有结构化数据
+        structured_data_list = db.query(PatientStructuredData).filter(
+            PatientStructuredData.conversation_id == conversation_id,
+            PatientStructuredData.is_deleted == False
+        ).all()
+
+        if not structured_data_list:
+            return None
+
+        # 返回第一条记录（保持兼容性）
+        return structured_data_list[0] if structured_data_list else None
+
+    @staticmethod
+    def get_patient_timeline(patient_detail: PatientStructuredData) -> Optional[Dict[str, Any]]:
+        """获取患者时间轴数据"""
+        if patient_detail and patient_detail.data_type == "timeline":
+            return patient_detail.structuredcontent
+        return None
+
+    @staticmethod
+    def get_patient_journey(patient_detail: PatientStructuredData) -> Optional[Dict[str, Any]]:
+        """获取患者就诊历程数据"""
+        if patient_detail and patient_detail.data_type == "journey":
+            return patient_detail.structuredcontent
+        return None
+
+    @staticmethod
+    def get_raw_files_data(patient_detail: PatientStructuredData) -> Optional[List[Dict[str, Any]]]:
+        """获取原始文件数据"""
+        # 从bus_patient_files表查询
+        if not patient_detail:
+            return None
+
+        try:
+            from app.models.bus_models import PatientFile, PatientConversation
+            # 获取会话信息
+            conversation = patient_detail.conversation
+            if not conversation:
+                return None
+
+            # 查询该患者的所有文件
+            files = patient_detail.patient.files
+            return [
+                {
+                    "file_uuid": f.id,
+                    "file_name": f.file_name,
+                    "file_url": f.file_url,
+                    "file_type": f.file_type,
+                    "extracted_text": f.extracted_text,
+                }
+                for f in files if not f.is_deleted
+            ]
+        except:
+            return None
+
+    @staticmethod
+    def update_patient_detail(
+        db: Session,
+        patient_detail: PatientStructuredData,
+        **kwargs
+    ):
+        """更新患者详情记录（更新bus_patient_structured_data）"""
+
+        try:
+            # 更新timeline数据
+            if "patient_timeline" in kwargs and kwargs["patient_timeline"]:
+                timeline = db.query(PatientStructuredData).filter(
+                    PatientStructuredData.conversation_id == patient_detail.conversation_id,
+                    PatientStructuredData.data_type == "timeline",
+                    PatientStructuredData.is_deleted == False
+                ).first()
+
+                if timeline:
+                    timeline.structuredcontent = kwargs["patient_timeline"]
+                    timeline.text_content = kwargs.get("patient_full_content")
+
+            # 更新journey数据
+            if "patient_journey" in kwargs and kwargs["patient_journey"]:
+                journey = db.query(PatientStructuredData).filter(
+                    PatientStructuredData.conversation_id == patient_detail.conversation_id,
+                    PatientStructuredData.data_type == "journey",
+                    PatientStructuredData.is_deleted == False
+                ).first()
+
+                if journey:
+                    journey.structuredcontent = kwargs["patient_journey"]
+
+            # 更新mdt_report数据
+            if "mdt_simple_report" in kwargs and kwargs["mdt_simple_report"]:
+                mdt = db.query(PatientStructuredData).filter(
+                    PatientStructuredData.conversation_id == patient_detail.conversation_id,
+                    PatientStructuredData.data_type == "mdt_report",
+                    PatientStructuredData.is_deleted == False
+                ).first()
+
+                if mdt:
+                    mdt.structuredcontent = kwargs["mdt_simple_report"]
+
+            db.commit()
+            logger.info(f"患者详情数据更新成功 - conversation_id: {patient_detail.conversation_id}")
+
+        except Exception as e:
+            db.rollback()
+            logger.error(f"更新患者详情数据失败: {str(e)}")
+            raise
+        conversation_id: str
+    ) -> Optional[PatientDetail]:
+        """根据conversation_id获取患者详情"""
+        return db.query(PatientDetail).filter(
+            PatientDetail.conversation_id == conversation_id
+        ).first()
+    
+    @staticmethod
+    def get_raw_files_data(patient_detail: PatientDetail) -> Optional[List[Dict[str, Any]]]:
+        """获取原始文件数据（反序列化）"""
+        if not patient_detail.raw_files_data:
+            return None
+        try:
+            data = json.loads(patient_detail.raw_files_data)
+            # 确保返回的是列表格式
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, dict):
+                # 如果是旧格式的字典，转换为列表
+                return [data]
+            else:
+                return None
+        except json.JSONDecodeError:
+            return None
+    
+    @staticmethod
+    def get_raw_file_ids(patient_detail: PatientDetail) -> Optional[List[str]]:
+        """获取原始文件ID列表"""
+        if not patient_detail.raw_file_ids:
+            return None
+        # 分割逗号分隔的字符串，并去除空白
+        return [file_id.strip() for file_id in patient_detail.raw_file_ids.split(",") if file_id.strip()]
+    
+    @staticmethod
+    def get_patient_timeline(patient_detail: PatientDetail) -> Optional[Dict[str, Any]]:
+        """获取患者时间轴数据（反序列化）"""
+        if not patient_detail.patient_timeline:
+            return None
+        try:
+            return json.loads(patient_detail.patient_timeline)
+        except json.JSONDecodeError:
+            return None
+    
+    @staticmethod
+    def get_patient_journey(patient_detail: PatientDetail) -> Optional[Dict[str, Any]]:
+        """获取患者就诊历程数据（反序列化）"""
+        if not patient_detail.patient_journey:
+            return None
+        try:
+            return json.loads(patient_detail.patient_journey)
+        except json.JSONDecodeError:
+            return None
+    
+    @staticmethod
+    def get_mdt_simple_report(patient_detail: PatientDetail) -> Optional[Dict[str, Any]]:
+        """获取MDT简化报告数据（反序列化）"""
+        if not patient_detail.mdt_simple_report:
+            return None
+        try:
+            return json.loads(patient_detail.mdt_simple_report)
+        except json.JSONDecodeError:
+            return None
+
+    @staticmethod
+    def get_ppt_info(patient_detail: PatientDetail) -> Optional[Dict[str, Any]]:
+        """获取PPT信息数据（反序列化）"""
+        if not patient_detail.ppt_info:
+            return None
+        try:
+            return json.loads(patient_detail.ppt_info)
+        except json.JSONDecodeError:
+            return None
+
+    @staticmethod
+    def get_extraction_statistics(patient_detail: PatientDetail) -> Optional[Dict[str, Any]]:
+        """获取文件提取统计信息（反序列化）"""
+        if not patient_detail.extraction_statistics:
+            return None
+        try:
+            return json.loads(patient_detail.extraction_statistics)
+        except json.JSONDecodeError:
+            return None
+
+    @staticmethod
+    def update_patient_detail(
+        db: Session,
+        patient_detail: PatientDetail,
+        raw_text_data: Optional[str] = None,
+        raw_files_data: Optional[List[Dict[str, Any]]] = None,
+        raw_file_ids: Optional[List[str]] = None,
+        patient_timeline: Optional[Dict[str, Any]] = None,
+        patient_journey: Optional[Dict[str, Any]] = None,
+        mdt_simple_report: Optional[Dict[str, Any]] = None,
+        patient_full_content: Optional[str] = None,
+        ppt_info: Optional[Dict[str, Any]] = None,
+        extraction_statistics: Optional[Dict[str, Any]] = None
+    ) -> PatientDetail:
+        """更新患者详情记录"""
+
+        if raw_text_data is not None:
+            patient_detail.raw_text_data = raw_text_data
+
+        if raw_files_data is not None:
+            if isinstance(raw_files_data, list):
+                patient_detail.raw_files_data = json.dumps(raw_files_data, ensure_ascii=False)
+            else:
+                # 如果传入的是字符串，直接使用
+                patient_detail.raw_files_data = raw_files_data if isinstance(raw_files_data, str) else json.dumps(raw_files_data, ensure_ascii=False)
+
+        if raw_file_ids is not None:
+            if isinstance(raw_file_ids, list):
+                patient_detail.raw_file_ids = ",".join(raw_file_ids) if raw_file_ids else None
+            else:
+                # 如果传入的是字符串，直接使用
+                patient_detail.raw_file_ids = raw_file_ids
+
+        if patient_timeline is not None:
+            if isinstance(patient_timeline, dict):
+                patient_detail.patient_timeline = json.dumps(patient_timeline, ensure_ascii=False)
+            else:
+                patient_detail.patient_timeline = patient_timeline if isinstance(patient_timeline, str) else json.dumps(patient_timeline, ensure_ascii=False)
+
+        if patient_journey is not None:
+            if isinstance(patient_journey, dict):
+                patient_detail.patient_journey = json.dumps(patient_journey, ensure_ascii=False)
+            else:
+                patient_detail.patient_journey = patient_journey if isinstance(patient_journey, str) else json.dumps(patient_journey, ensure_ascii=False)
+
+        if mdt_simple_report is not None:
+            if isinstance(mdt_simple_report, dict):
+                patient_detail.mdt_simple_report = json.dumps(mdt_simple_report, ensure_ascii=False)
+            else:
+                patient_detail.mdt_simple_report = mdt_simple_report if isinstance(mdt_simple_report, str) else json.dumps(mdt_simple_report, ensure_ascii=False)
+
+        if patient_full_content is not None:
+            patient_detail.patient_full_content = patient_full_content
+
+        if ppt_info is not None:
+            if isinstance(ppt_info, dict):
+                patient_detail.ppt_info = json.dumps(ppt_info, ensure_ascii=False)
+            else:
+                patient_detail.ppt_info = ppt_info if isinstance(ppt_info, str) else json.dumps(ppt_info, ensure_ascii=False)
+
+        if extraction_statistics is not None:
+            if isinstance(extraction_statistics, dict):
+                patient_detail.extraction_statistics = json.dumps(extraction_statistics, ensure_ascii=False)
+            else:
+                patient_detail.extraction_statistics = extraction_statistics if isinstance(extraction_statistics, str) else json.dumps(extraction_statistics, ensure_ascii=False)
+
+        db.commit()
+        db.refresh(patient_detail)
+
+        return patient_detail
+    
+    @staticmethod
+    def get_all_data(patient_detail: PatientDetail) -> Dict[str, Any]:
+        """获取患者详情的所有数据（反序列化后）"""
+        return {
+            "id": patient_detail.id,
+            "conversation_id": patient_detail.conversation_id,
+            "raw_text_data": patient_detail.raw_text_data,
+            "raw_files_data": PatientDetailHelper.get_raw_files_data(patient_detail),
+            "raw_file_ids": PatientDetailHelper.get_raw_file_ids(patient_detail),
+            "patient_timeline": PatientDetailHelper.get_patient_timeline(patient_detail),
+            "patient_journey": PatientDetailHelper.get_patient_journey(patient_detail),
+            "mdt_simple_report": PatientDetailHelper.get_mdt_simple_report(patient_detail),
+            "ppt_info": PatientDetailHelper.get_ppt_info(patient_detail),
+            "patient_full_content": patient_detail.patient_full_content,
+            "created_at": patient_detail.created_at,
+            "updated_at": patient_detail.updated_at
+        }
+    
+    @staticmethod
+    def generate_full_content(
+        raw_text_data: Optional[str] = None,
+        raw_files_data: Optional[List[Dict[str, Any]]] = None,
+        patient_timeline: Optional[Dict[str, Any]] = None,
+        patient_journey: Optional[Dict[str, Any]] = None,
+        mdt_simple_report: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """生成患者完整内容拼接文本"""
+        content_parts = []
+        
+        # 添加原始文本数据
+        if raw_text_data:
+            content_parts.append(f"=== 原始文本数据 ===\n{raw_text_data}")
+        
+        # 添加文件提取的文本内容
+        if raw_files_data:
+            content_parts.append("=== 文件提取内容 ===")
+            for file_info in raw_files_data:
+                filename = file_info.get('filename', '未知文件')
+                extracted_text = file_info.get('extracted_text', '')
+                if extracted_text:
+                    content_parts.append(f"文件：{filename}\n{extracted_text}")
+        
+        # 添加结构化数据的文本表示
+        if patient_timeline:
+            content_parts.append(f"=== 患者时间轴 ===\n{json.dumps(patient_timeline, ensure_ascii=False, indent=2)}")
+        
+        if patient_journey:
+            content_parts.append(f"=== 患者就诊历程 ===\n{json.dumps(patient_journey, ensure_ascii=False, indent=2)}")
+        
+        if mdt_simple_report:
+            content_parts.append(f"=== MDT简化报告 ===\n{json.dumps(mdt_simple_report, ensure_ascii=False, indent=2)}")
+        
+        return "\n\n".join(content_parts)
+    
+    @staticmethod
+    def create_with_auto_full_content(
+        db: Session,
+        conversation_id: str,
+        raw_text_data: Optional[str] = None,
+        raw_files_data: Optional[List[Dict[str, Any]]] = None,
+        raw_file_ids: Optional[List[str]] = None,
+        patient_timeline: Optional[Dict[str, Any]] = None,
+        patient_journey: Optional[Dict[str, Any]] = None,
+        mdt_simple_report: Optional[Dict[str, Any]] = None
+    ) -> PatientDetail:
+        """创建患者详情记录并自动生成完整内容"""
+        
+        # 自动生成完整内容
+        full_content = PatientDetailHelper.generate_full_content(
+            raw_text_data=raw_text_data,
+            raw_files_data=raw_files_data,
+            patient_timeline=patient_timeline,
+            patient_journey=patient_journey,
+            mdt_simple_report=mdt_simple_report
+        )
+        
+        return PatientDetailHelper.create_patient_detail(
+            db=db,
+            conversation_id=conversation_id,
+            raw_text_data=raw_text_data,
+            raw_files_data=raw_files_data,
+            raw_file_ids=raw_file_ids,
+            patient_timeline=patient_timeline,
+            patient_journey=patient_journey,
+            mdt_simple_report=mdt_simple_report,
+            patient_full_content=full_content
+        )
+    
+    @staticmethod
+    def extract_file_ids_from_files_data(raw_files_data: List[Dict[str, Any]]) -> List[str]:
+        """从文件数据中提取文件UUID列表"""
+        if not raw_files_data:
+            return []
+        
+        # 确保raw_files_data是列表格式
+        if isinstance(raw_files_data, dict):
+            raw_files_data = [raw_files_data]
+        elif not isinstance(raw_files_data, list):
+            return []
+        
+        file_ids = []
+        for file_info in raw_files_data:
+            if not isinstance(file_info, dict):
+                continue
+            # 尝试多种可能的UUID字段名
+            for uuid_field in ['file_uuid', 'uuid', 'id', 'file_id']:
+                if uuid_field in file_info and file_info[uuid_field]:
+                    file_ids.append(str(file_info[uuid_field]))
+                    break
+        return file_ids
+    
+    @staticmethod
+    def create_with_auto_file_ids(
+        db: Session,
+        conversation_id: str,
+        raw_text_data: Optional[str] = None,
+        raw_files_data: Optional[List[Dict[str, Any]]] = None,
+        patient_timeline: Optional[Dict[str, Any]] = None,
+        patient_journey: Optional[Dict[str, Any]] = None,
+        mdt_simple_report: Optional[Dict[str, Any]] = None
+    ) -> PatientDetail:
+        """创建患者详情记录，自动从文件数据中提取文件ID和生成完整内容"""
+        
+        # 自动从文件数据中提取文件ID
+        raw_file_ids = None
+        if raw_files_data:
+            raw_file_ids = PatientDetailHelper.extract_file_ids_from_files_data(raw_files_data)
+        
+        return PatientDetailHelper.create_with_auto_full_content(
+            db=db,
+            conversation_id=conversation_id,
+            raw_text_data=raw_text_data,
+            raw_files_data=raw_files_data,
+            raw_file_ids=raw_file_ids,
+            patient_timeline=patient_timeline,
+            patient_journey=patient_journey,
+            mdt_simple_report=mdt_simple_report
+        )
+
+    @staticmethod
+    def merge_raw_files_data(
+        existing_files_data: Optional[List[Dict[str, Any]]], 
+        new_files_data: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        合并现有的文件数据和新的文件数据
+        
+        Args:
+            existing_files_data: 现有的文件数据列表
+            new_files_data: 新的文件数据列表
+            
+        Returns:
+            List[Dict[str, Any]]: 合并后的文件数据列表
+        """
+        # 确保输入数据格式正确
+        if existing_files_data is None:
+            existing_files_data = []
+        elif isinstance(existing_files_data, dict):
+            existing_files_data = [existing_files_data]
+        elif not isinstance(existing_files_data, list):
+            existing_files_data = []
+        
+        if new_files_data is None:
+            new_files_data = []
+        elif isinstance(new_files_data, dict):
+            new_files_data = [new_files_data]
+        elif not isinstance(new_files_data, list):
+            new_files_data = []
+        
+        if not existing_files_data:
+            return new_files_data if new_files_data else []
+        
+        if not new_files_data:
+            return existing_files_data
+        
+        # 创建一个字典来跟踪已存在的文件（基于file_uuid或其他唯一标识）
+        existing_files_dict = {}
+        for file_data in existing_files_data:
+            # 使用多种可能的UUID字段名
+            file_uuid = None
+            for uuid_field in ['file_uuid', 'uuid', 'id', 'file_id']:
+                if uuid_field in file_data and file_data[uuid_field]:
+                    file_uuid = str(file_data[uuid_field])
+                    break
+            
+            if file_uuid:
+                existing_files_dict[file_uuid] = file_data
+        
+        # 添加或更新新的文件数据
+        for new_file_data in new_files_data:
+            file_uuid = None
+            for uuid_field in ['file_uuid', 'uuid', 'id', 'file_id']:
+                if uuid_field in new_file_data and new_file_data[uuid_field]:
+                    file_uuid = str(new_file_data[uuid_field])
+                    break
+            
+            if file_uuid:
+                existing_files_dict[file_uuid] = new_file_data
+        
+        # 重构最终的文件数据列表
+        merged_files_data = list(existing_files_dict.values())
+        
+        # 添加没有唯一标识的文件（从现有数据中）
+        for file_data in existing_files_data:
+            file_uuid = None
+            for uuid_field in ['file_uuid', 'uuid', 'id', 'file_id']:
+                if uuid_field in file_data and file_data[uuid_field]:
+                    file_uuid = str(file_data[uuid_field])
+                    break
+            
+            if not file_uuid:
+                merged_files_data.append(file_data)
+        
+        # 添加没有唯一标识的文件（从新数据中）
+        for new_file_data in new_files_data:
+            file_uuid = None
+            for uuid_field in ['file_uuid', 'uuid', 'id', 'file_id']:
+                if uuid_field in new_file_data and new_file_data[uuid_field]:
+                    file_uuid = str(new_file_data[uuid_field])
+                    break
+            
+            if not file_uuid:
+                merged_files_data.append(new_file_data)
+        
+        return merged_files_data
+
+
+# 示例用法
+"""
+# 创建患者详情（自动生成完整内容和提取文件ID）
+raw_files_example = [
+    {
+        "file_uuid": "550e8400-e29b-41d4-a716-446655440000",
+        "filename": "patient_report.pdf",
+        "upload_filename": "550e8400-e29b-41d4-a716-446655440000.pdf",
+        "file_extension": "pdf",
+        "file_type": "检验单",
+        "cloud_storage_url": "https://storage.example.com/files/550e8400...",
+        "extracted_text": "患者姓名：张三，年龄：45岁，主诉：胸痛3天...",
+        "file_size": 1024000,
+        "upload_timestamp": "2024-01-15T10:30:00",
+        "exam_date": "2024-01-14"
+    },
+    {
+        "file_uuid": "660f9511-f30c-52e5-b827-557766551111",
+        "filename": "lab_results.pdf",
+        "upload_filename": "660f9511-f30c-52e5-b827-557766551111.pdf",
+        "file_extension": "pdf",
+        "file_type": "体检报告",
+        "extracted_text": "血常规检查结果...",
+        "file_size": 512000,
+        "upload_timestamp": "2024-01-15T11:00:00",
+        "exam_date": "2024-01-15"
+    }
+]
+
+patient_timeline_example = {
+    "timeline": [
+        {
+            "date": "2024-01-10",
+            "event": "首次就诊",
+            "details": "主诉：胸痛3天，伴有气促"
+        }
+    ]
+}
+
+# 方法1: 最简单的创建方式（自动提取文件ID和生成完整内容）
+patient_detail = PatientDetailHelper.create_with_auto_file_ids(
+    db=db_session,
+    conversation_id="conv_123",
+    raw_text_data="患者张三，男，45岁，因胸痛3天来院就诊...",
+    raw_files_data=raw_files_example,
+    patient_timeline=patient_timeline_example
+)
+
+# 方法2: 手动指定文件ID列表
+patient_detail = PatientDetailHelper.create_with_auto_full_content(
+    db=db_session,
+    conversation_id="conv_123",
+    raw_text_data="患者基本信息...",
+    raw_files_data=raw_files_example,
+    raw_file_ids=["550e8400-e29b-41d4-a716-446655440000", "660f9511-f30c-52e5-b827-557766551111"],
+    patient_timeline=patient_timeline_example
+)
+
+# 查询并获取所有数据
+patient_detail = PatientDetailHelper.get_patient_detail_by_conversation_id(
+    db=db_session,
+    conversation_id="conv_123"
+)
+all_data = PatientDetailHelper.get_all_data(patient_detail)
+
+# 获取文件ID列表
+file_ids = PatientDetailHelper.get_raw_file_ids(patient_detail)
+# 返回: ["550e8400-e29b-41d4-a716-446655440000", "660f9511-f30c-52e5-b827-557766551111"]
+
+# 从文件数据中提取文件ID
+extracted_ids = PatientDetailHelper.extract_file_ids_from_files_data(raw_files_example)
+# 返回: ["550e8400-e29b-41d4-a716-446655440000", "660f9511-f30c-52e5-b827-557766551111"]
+""" 

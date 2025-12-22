@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+api.log
+
+# Test and data
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Uploads and outputs (keep structure, exclude files)
+uploads/*
+!uploads/.gitkeep
+output/*
+!output/.gitkeep
+
+# Documentation
+*.md
+!README.md
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose*.yml
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Others
+.claude/
+*.bak
+*.tmp
+temp/
+tmp/

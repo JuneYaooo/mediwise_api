@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>患者时间旅程</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        /* 如果有本地字体，使用本地字体 */
+        {{FONT_FACE_CSS}}
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "Source Han Sans SC", "Droid Sans Fallback", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+            background: transparent;
+            padding: 0;
+            margin: 0;
+        }
+
+        .container {
+            background: transparent;
+            border-radius: 0;
+            padding: 160px 20px 20px 20px;
+            max-width: none;
+            margin: 0 auto;
+        }
+
+        .header {
+            display: none;
+        }
+
+        .title {
+            font-size: 36px;
+            font-weight: 600;
+            color: #1f2937;
+            text-align: center;
+            margin-bottom: 12px;
+        }
+
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 64px;
+            margin-bottom: 16px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .legend-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+        }
+
+        .legend-dot.main-disease {
+            background-color: #a855f7;
+        }
+
+        .legend-dot.comorbidity {
+            background-color: #3b82f6;
+        }
+
+        .legend-text {
+            font-size: 20px;
+            color: #4b5563;
+        }
+
+        .chart-container {
+            position: relative;
+            width: 2800px;
+            margin: 0 auto;
+            background: transparent;
+            padding: 0;
+        }
+
+        svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .timeline-content {
+            position: relative;
+            z-index: 2;
+        }
+
+        .timeline-node {
+            position: absolute;
+            transform: translate(-50%, -50%);
+        }
+
+        .node-center {
+            position: relative;
+            z-index: 20;
+        }
+
+        .node-pulse {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            border-radius: 50%;
+            top: 12px;
+            left: 12px;
+            opacity: 0.25;
+            animation: pulse 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+                opacity: 0.25;
+            }
+            50% {
+                transform: scale(2);
+                opacity: 0;
+            }
+        }
+
+        .node-circle {
+            position: relative;
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            border-radius: 50%;
+            border: 4px solid white;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .node-inner {
+            width: 16px;
+            height: 16px;
+            background: white;
+            border-radius: 50%;
+        }
+
+        .date-label {
+            position: absolute;
+            top: 48px;
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: nowrap;
+        }
+
+        .date-badge {
+            background: #f3f4f6;
+            color: #4b5563;
+            font-size: 18px;
+            font-weight: 500;
+            padding: 6px 12px;
+            border-radius: 4px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .events-container {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            gap: 12px;
+            transform: translateY(-140px);
+            height: 120px;
+            z-index: 15;
+        }
+
+        .event-card {
+            border-radius: 8px;
+            padding: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            transition: all 0.3s ease;
+            backdrop-filter: blur(5px);
+        }
+
+        .event-card:hover {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            transform: scale(1.05);
+        }
+
+        .event-card.main-disease {
+            background: linear-gradient(135deg, #faf5ff, #f3e8ff);
+            border: 2px solid #d8b4fe;
+        }
+
+        .event-card.comorbidity {
+            background: linear-gradient(135deg, #eff6ff, #dbeafe);
+            border: 2px solid #93c5fd;
+        }
+
+        .event-text {
+            font-size: 18px;
+            line-height: 1.5;
+            font-weight: 500;
+        }
+
+        .event-text.main-disease {
+            color: #6b21a8;
+        }
+
+        .event-text.comorbidity {
+            color: #1e40af;
+        }
+
+        .surgeon-info {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #e5e7eb;
+            display: flex;
+            align-items: center;
+            font-size: 16px;
+            color: #4b5563;
+        }
+
+        .surgeon-icon {
+            width: 12px;
+            height: 12px;
+            margin-right: 4px;
+            flex-shrink: 0;
+        }
+
+        .connection-line {
+            width: 2px;
+            height: 80px;
+            background: linear-gradient(180deg, #818cf8, #a855f7);
+            margin: 10px auto 0;
+        }
+
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -15;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 class="title" id="pageTitle">患者时间旅程</h1>
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-dot main-disease"></div>
+                    <span class="legend-text">主疾病</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot comorbidity"></div>
+                    <span class="legend-text">共病</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="chart-container" id="chartContainer">
+            <svg id="svgCanvas" width="2800" height="800">
+                <defs>
+                    <linearGradient id="timelineGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#8b5cf6" />
+                        <stop offset="25%" stop-color="#06b6d4" />
+                        <stop offset="50%" stop-color="#10b981" />
+                        <stop offset="75%" stop-color="#f59e0b" />
+                        <stop offset="100%" stop-color="#ef4444" />
+                    </linearGradient>
+                    <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto" markerUnits="strokeWidth">
+                        <path d="M 0 0 L 6 3 L 0 6" fill="none" stroke="url(#timelineGradient)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+                    </marker>
+                    <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="rgba(0,0,0,0.2)"/>
+                    </filter>
+                </defs>
+                <path id="connectingPath" stroke="url(#timelineGradient)" stroke-width="4" fill="none" filter="url(#dropShadow)" marker-end="url(#arrowhead)" style="stroke-dasharray: 10,5; animation: dash 4s linear infinite;"/>
+            </svg>
+
+            <div class="timeline-content" id="timelineContent"></div>
+        </div>
+    </div>
+
+    <script>
+        // 数据将从Python注入
+        const patientJourneyData = {{DATA_PLACEHOLDER}};
+        const patientName = "{{PATIENT_NAME}}";
+
+        // 更新标题
+        document.getElementById('pageTitle').textContent = `患者时间旅程 - ${patientName}`;
+
+        // 配置
+        const containerWidth = 2800;
+        const rowHeight = 280;
+        const startY = 80;
+
+        // 格式化日期
+        function formatDate(dateStr) {
+            try {
+                const date = new Date(dateStr);
+                return date.toLocaleDateString('zh-CN', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                });
+            } catch {
+                return dateStr;
+            }
+        }
+
+        // 计算每行最佳项目数
+        function calculateOptimalItemsPerRow(totalItems) {
+            if (totalItems <= 4) return Math.min(totalItems, 2);
+            if (totalItems <= 6) return Math.min(totalItems, 3);
+            if (totalItems <= 12) return 4;
+            if (totalItems <= 20) return 5;
+            if (totalItems <= 30) return 6;
+            if (totalItems <= 42) return 7;
+            if (totalItems <= 56) return 8;
+            if (totalItems <= 72) return 9;
+            return 10;
+        }
+
+        // 计算蛇形布局位置
+        function calculateSnakeLayoutPosition(index, itemsPerRow) {
+            const itemWidth = containerWidth / itemsPerRow;
+            const row = Math.floor(index / itemsPerRow);
+            const colInRow = index % itemsPerRow;
+            const isEvenRow = row % 2 === 0;
+            const actualCol = isEvenRow ? colInRow : (itemsPerRow - 1 - colInRow);
+            const x = actualCol * itemWidth + itemWidth / 2;
+            const y = row * rowHeight + startY;
+
+            return { x, y, row, col: actualCol, isEvenRow };
+        }
+
+        // 生成蛇形路径
+        function generateSnakePath(positions, itemsPerRow) {
+            if (positions.length < 2) return '';
+
+            let path = `M ${positions[0].x} ${positions[0].y}`;
+
+            for (let i = 1; i < positions.length; i++) {
+                const current = positions[i];
+                const previous = positions[i - 1];
+
+                if (current.row === previous.row) {
+                    const controlOffset = Math.abs(current.x - previous.x) * 0.3;
+                    const direction = current.x > previous.x ? 1 : -1;
+                    path += ` C ${previous.x + controlOffset * direction} ${previous.y}, ${current.x - controlOffset * direction} ${current.y}, ${current.x} ${current.y}`;
+                } else {
+                    const itemWidth = containerWidth / itemsPerRow;
+                    let rowEndX = previous.isEvenRow ? (itemsPerRow - 1) * itemWidth + itemWidth / 2 : itemWidth / 2;
+                    let nextRowStartX = current.isEvenRow ? itemWidth / 2 : (itemsPerRow - 1) * itemWidth + itemWidth / 2;
+
+                    if (Math.abs(previous.x - rowEndX) > 10) {
+                        const controlOffset = Math.abs(previous.x - rowEndX) * 0.3;
+                        const direction = rowEndX > previous.x ? 1 : -1;
+                        path += ` C ${previous.x + controlOffset * direction} ${previous.y}, ${rowEndX - controlOffset * direction} ${previous.y}, ${rowEndX} ${previous.y}`;
+                    }
+
+                    path += ` C ${rowEndX} ${previous.y + 40}, ${nextRowStartX} ${current.y - 40}, ${nextRowStartX} ${current.y}`;
+
+                    if (Math.abs(nextRowStartX - current.x) > 10) {
+                        const controlOffset = Math.abs(nextRowStartX - current.x) * 0.3;
+                        const direction = current.x > nextRowStartX ? 1 : -1;
+                        path += ` C ${nextRowStartX + controlOffset * direction} ${current.y}, ${current.x - controlOffset * direction} ${current.y}, ${current.x} ${current.y}`;
+                    }
+                }
+            }
+
+            return path;
+        }
+
+        // 渲染文本（支持简单Markdown）
+        function renderText(text) {
+            return text
+                .replace(/\*\*(.*?)\*\*/g, '<strong style="font-weight: 600;">$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em style="font-style: italic;">$1</em>')
+                .replace(/`(.*?)`/g, '<code style="background-color: rgba(0,0,0,0.1); padding: 1px 3px; border-radius: 2px; font-family: monospace; font-size: 0.9em;">$1</code>');
+        }
+
+        // 初始化渲染
+        function renderTimeline() {
+            if (!patientJourneyData || patientJourneyData.length === 0) {
+                document.querySelector('.container').innerHTML = '<div style="text-align: center; padding: 40px; color: #6b7280;">暂无疾病时间线数据</div>';
+                return;
+            }
+
+            // 按日期排序
+            const sortedData = [...patientJourneyData].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            // 获取唯一日期
+            const allDates = [...new Set(sortedData.map(item => item.date))].sort((a, b) => new Date(a) - new Date(b));
+
+            // 计算布局
+            const itemsPerRow = calculateOptimalItemsPerRow(allDates.length);
+            const totalRows = Math.ceil(allDates.length / itemsPerRow);
+            const canvasHeight = startY + (totalRows - 1) * rowHeight + 120;
+
+            // 更新SVG高度
+            const svg = document.getElementById('svgCanvas');
+            svg.setAttribute('height', canvasHeight);
+
+            // 更新容器高度
+            const chartContainer = document.getElementById('chartContainer');
+            chartContainer.style.height = `${canvasHeight}px`;
+
+            // 计算位置
+            const positions = allDates.map((date, index) => ({
+                date,
+                ...calculateSnakeLayoutPosition(index, itemsPerRow)
+            }));
+
+            // 生成连接路径
+            const pathD = generateSnakePath(positions, itemsPerRow);
+            document.getElementById('connectingPath').setAttribute('d', pathD);
+
+            // 渲染时间节点和事件
+            const timelineContent = document.getElementById('timelineContent');
+            timelineContent.innerHTML = '';
+
+            positions.forEach((pos, index) => {
+                const eventsOnDate = sortedData.filter(item => item.date === pos.date);
+
+                // 创建节点容器
+                const nodeDiv = document.createElement('div');
+                nodeDiv.className = 'timeline-node';
+                nodeDiv.style.left = `${pos.x}px`;
+                nodeDiv.style.top = `${pos.y}px`;
+
+                // 节点中心
+                nodeDiv.innerHTML = `
+                    <div class="node-center">
+                        <div class="node-pulse"></div>
+                        <div class="node-circle">
+                            <div class="node-inner"></div>
+                        </div>
+                        <div class="date-label">
+                            <div class="date-badge">${formatDate(pos.date)}</div>
+                        </div>
+                    </div>
+                `;
+
+                // 事件卡片
+                if (eventsOnDate.length > 0) {
+                    const eventsContainer = document.createElement('div');
+                    eventsContainer.className = 'events-container';
+
+                    eventsOnDate.forEach(event => {
+                        const cardDiv = document.createElement('div');
+                        cardDiv.className = `event-card ${event.type === '主疾病' ? 'main-disease' : 'comorbidity'}`;
+                        cardDiv.style.minWidth = `${Math.max(120, 280 - itemsPerRow * 16)}px`;
+                        cardDiv.style.maxWidth = `${Math.max(140, 320 - itemsPerRow * 18)}px`;
+
+                        let cardContent = `<div class="event-text ${event.type === '主疾病' ? 'main-disease' : 'comorbidity'}">${renderText(event.text)}</div>`;
+
+                        if (event.chief_surgeon && event.chief_surgeon.trim()) {
+                            cardContent += `
+                                <div class="surgeon-info">
+                                    <svg class="surgeon-icon" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/>
+                                    </svg>
+                                    <span><strong>主刀：</strong>${event.chief_surgeon}</span>
+                                </div>
+                            `;
+                        }
+
+                        cardDiv.innerHTML = cardContent;
+                        eventsContainer.appendChild(cardDiv);
+                    });
+
+                    // 连接线
+                    const connectionLine = document.createElement('div');
+                    connectionLine.className = 'connection-line';
+                    eventsContainer.appendChild(connectionLine);
+
+                    nodeDiv.appendChild(eventsContainer);
+                }
+
+                timelineContent.appendChild(nodeDiv);
+            });
+        }
+
+        // 页面加载完成后渲染
+        window.addEventListener('DOMContentLoaded', renderTimeline);
+    </script>
+</body>
+</html>

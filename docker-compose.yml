@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  # MediWise API 服务
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mediwise-api
+    restart: unless-stopped
+    network_mode: "host"
+    env_file:
+      - .env
+    environment:
+      # Redis 配置（使用 host 上的 Redis）
+      - REDIS_HOST=localhost
+      - REDIS_PORT=6444
+      # 服务器配置
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=9527
+    volumes:
+      # 挂载数据目录（用于测试脚本访问）
+      - /home/ubuntu/data:/home/ubuntu/data:ro
+      # 挂载上传和输出目录
+      - ./uploads:/app/uploads
+      - ./output:/app/output
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9527/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

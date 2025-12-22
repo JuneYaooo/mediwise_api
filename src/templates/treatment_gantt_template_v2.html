@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>患者治疗甘特图</title>
+    <style>
+        {{FONT_FACE_CSS}}
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'CustomChinese', 'Microsoft YaHei', '微软雅黑', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            width: calc(100% - 40px);
+            max-width: none;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .gantt-container {
+            width: 100%;
+            overflow-x: auto;
+            overflow-y: visible;
+        }
+
+        #ganttChart {
+            width: 100%;
+            min-height: 800px;
+            min-width: 2400px;
+        }
+
+        .legend {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 2px solid #e0e0e0;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .legend-color {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #999;
+            font-size: 18px;
+        }
+
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{PATIENT_NAME}} 治疗时间线</h1>
+            <p>Treatment Timeline & Gantt Chart</p>
+        </div>
+
+        <div class="content">
+            <div class="loading" id="loading">正在加载治疗时间线</div>
+            <div class="gantt-container" id="ganttContainer" style="display: none;">
+                <div id="ganttChart"></div>
+            </div>
+
+            <div class="legend" id="legend" style="display: none;">
+                <!-- 图例将由JavaScript动态生成 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 引入 Google Charts -->
+    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+
+    <script>
+        // 注入的治疗数据
+        const treatmentData = {{DATA_PLACEHOLDER}};
+
+        // 定义治疗类别的颜色映射
+        const categoryColors = {
+            '外科治疗': '#FF6B6B',
+            '局部治疗': '#4ECDC4',
+            '系统治疗': '#45B7D1',
+            '化疗': '#96CEB4',
+            '靶免治疗': '#FFEAA7',
+            '靶向治疗': '#DFE6E9',
+            '免疫治疗': '#A29BFE',
+            '中医药治疗': '#FD79A8',
+            '辅助/支持治疗': '#FDCB6E',
+            '其他治疗': '#B2BEC3'
+        };
+
+        // 获取颜色
+        function getColor(category) {
+            return categoryColors[category] || '#95A5A6';
+        }
+
+        // 加载 Google Charts
+        google.charts.load('current', {'packages':['gantt']});
+        google.charts.setOnLoadCallback(drawChart);
+
+        function drawChart() {
+            try {
+                console.log('========== 甘特图渲染开始 (Google Charts) ==========');
+                console.log('治疗数据类型:', typeof treatmentData);
+                console.log('治疗数据长度:', Array.isArray(treatmentData) ? treatmentData.length : 'N/A');
+
+                if (!treatmentData || treatmentData.length === 0) {
+                    const errorMsg = '暂无治疗数据 - 数据为空或未正确传入';
+                    console.error(errorMsg);
+                    document.getElementById('loading').textContent = errorMsg;
+                    document.getElementById('loading').style.color = '#e74c3c';
+                    return;
+                }
+
+                console.log('开始渲染甘特图，治疗记录数:', treatmentData.length);
+
+                // 创建数据表
+                const data = new google.visualization.DataTable();
+                data.addColumn('string', 'Task ID');
+                data.addColumn('string', 'Task Name');
+                data.addColumn('string', 'Resource');
+                data.addColumn('date', 'Start Date');
+                data.addColumn('date', 'End Date');
+                data.addColumn('number', 'Duration');
+                data.addColumn('number', 'Percent Complete');
+                data.addColumn('string', 'Dependencies');
+
+                // 收集所有类别用于图例
+                const categories = new Set();
+
+                // 按 treatment_type 分组
+                const treatmentGroups = new Map();
+                let skippedCount = 0;
+
+                treatmentData.forEach((treatment, index) => {
+                    try {
+                        console.log(`处理治疗 [${index}]:`, treatment);
+
+                        if (!treatment.start_date || treatment.start_date === '') {
+                            console.error(`❌ 治疗 ${index} 缺少开始日期，已跳过:`, treatment);
+                            skippedCount++;
+                            return;
+                        }
+
+                        const groupKey = treatment.treatment_type || treatment.category || '未分类';
+                        console.log(`  ✓ 分组key: ${groupKey}`);
+
+                        if (!treatmentGroups.has(groupKey)) {
+                            treatmentGroups.set(groupKey, []);
+                        }
+                        treatmentGroups.get(groupKey).push(treatment);
+                        categories.add(treatment.category);
+
+                    } catch (e) {
+                        console.error(`❌ 处理治疗 ${index} 时出错:`, e, treatment);
+                        skippedCount++;
+                    }
+                });
+
+                console.log(`治疗数据处理完成: 总计${treatmentData.length}条, 跳过${skippedCount}条, 有效${treatmentData.length - skippedCount}条`);
+
+                if (treatmentGroups.size === 0) {
+                    const errorMsg = `所有${treatmentData.length}条治疗记录都缺少开始日期，无法绘制甘特图`;
+                    console.error('❌', errorMsg);
+                    document.getElementById('loading').textContent = errorMsg;
+                    document.getElementById('loading').style.color = '#e74c3c';
+                    return;
+                }
+
+                // 添加数据行
+                const rows = [];
+                treatmentGroups.forEach((treatments, groupKey) => {
+                    treatments.forEach((treatment, idx) => {
+                        const startDate = new Date(treatment.start_date);
+                        let endDate = treatment.end_date ? new Date(treatment.end_date) : new Date(startDate);
+
+                        if (isNaN(startDate.getTime())) {
+                            console.error(`日期格式无效: ${treatment.start_date}`);
+                            return;
+                        }
+
+                        if (isNaN(endDate.getTime()) || endDate < startDate) {
+                            endDate = new Date(startDate);
+                            endDate.setDate(endDate.getDate() + 1);
+                        }
+
+                        const taskId = treatment.id || `task_${groupKey}_${idx}`;
+                        const taskName = treatment.matched_drug || treatment.task_name || groupKey;
+                        const duration = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
+
+                        rows.push([
+                            taskId,
+                            taskName,
+                            groupKey,  // 资源（用于分组）
+                            startDate,
+                            endDate,
+                            duration,
+                            100,  // 完成度
+                            null  // 无依赖
+                        ]);
+
+                        console.log(`  添加行: ${taskName} (${treatment.start_date} ~ ${treatment.end_date || '自动'})`);
+                    });
+                });
+
+                data.addRows(rows);
+                console.log(`共添加 ${rows.length} 行数据到甘特图`);
+
+                // 计算图表高度
+                const itemHeight = 50;
+                const baseHeight = 200;
+                const chartHeight = Math.max(800, baseHeight + rows.length * itemHeight);
+                document.getElementById('ganttChart').style.height = chartHeight + 'px';
+
+                console.log(`图表高度设置为: ${chartHeight}px`);
+
+                // 配置选项
+                const options = {
+                    height: chartHeight,
+                    gantt: {
+                        trackHeight: 40,
+                        barHeight: 30,
+                        barCornerRadius: 4,
+                        shadowEnabled: true,
+                        shadowColor: '#000',
+                        shadowOffset: 2,
+                        palette: [
+                            { color: categoryColors['免疫治疗'], dark: '#8A7BC8', light: '#C5BCEC' },
+                            { color: categoryColors['靶免治疗'], dark: '#C5B800', light: '#FFF9C4' },
+                            { color: categoryColors['靶向治疗'], dark: '#A9B4B9', light: '#F5F7F8' },
+                            { color: categoryColors['外科治疗'], dark: '#CC5555', light: '#FFB5B5' },
+                            { color: categoryColors['辅助/支持治疗'], dark: '#CAA254', light: '#FFE8A1' },
+                            { color: categoryColors['其他治疗'], dark: '#8E9499', light: '#DEE1E3' }
+                        ],
+                        labelStyle: {
+                            fontName: 'CustomChinese, Microsoft YaHei',
+                            fontSize: 12,
+                            color: '#333'
+                        }
+                    }
+                };
+
+                // 绘制图表
+                const chart = new google.visualization.Gantt(document.getElementById('ganttChart'));
+                chart.draw(data, options);
+                console.log('Google Charts 甘特图渲染完成');
+
+                // 隐藏加载提示，显示图表
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('ganttContainer').style.display = 'block';
+                document.getElementById('legend').style.display = 'flex';
+
+                // 生成图例
+                generateLegend(categories);
+
+                // 标记渲染完成 - 创建一个隐藏的marker元素供Playwright检测
+                const marker = document.createElement('div');
+                marker.className = 'chart-ready';
+                marker.style.display = 'none';
+                document.body.appendChild(marker);
+
+            } catch (error) {
+                console.error('绘制甘特图失败:', error);
+                document.getElementById('loading').textContent = '绘制甘特图时发生错误: ' + error.message;
+                document.getElementById('loading').style.color = '#e74c3c';
+            }
+        }
+
+        function generateLegend(categories) {
+            const legendContainer = document.getElementById('legend');
+            legendContainer.innerHTML = '';
+
+            categories.forEach(category => {
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+
+                const colorBox = document.createElement('div');
+                colorBox.className = 'legend-color';
+                colorBox.style.backgroundColor = getColor(category);
+
+                const label = document.createElement('span');
+                label.textContent = category;
+
+                item.appendChild(colorBox);
+                item.appendChild(label);
+                legendContainer.appendChild(item);
+            });
+        }
+    </script>
+</body>
+</html>

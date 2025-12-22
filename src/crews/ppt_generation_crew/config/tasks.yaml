@@ -1,0 +1,118 @@
+generate_ppt_slides_task:
+  description: >
+    你的任务是调用MedicalPPTGenerationTool工具来生成医疗病例PPT文件。
+
+    **工作流程（必须按照此流程）:**
+
+    步骤1: 分析患者数据
+    - 阅读提供的患者结构化数据
+    - 根据数据内容决定使用哪些PPT页面布局
+    - 为每个页面准备符合schema要求的内容
+
+    步骤2: 调用工具生成PPT
+    - 你必须使用以下格式调用MedicalPPTGenerationTool工具:
+
+    Thought: 我已经准备好slides_data，现在调用工具生成PPT文件
+    Action: Generate Medical Case PowerPoint Presentation
+    Action Input: {{"slides_data": [...], "patient_name": "患者姓名", "template_id": "medical", "session_id": "会话ID", "upload_to_qiniu": true}}
+
+    步骤3: 根据工具返回结果输出最终答案
+    - 工具会返回包含local_path、file_uuid、qiniu_url等信息的结果
+    - 你需要将工具返回的结果作为Final Answer输出
+
+    **可用的医疗PPT页面布局:**
+      * medical:patient-info-slide - 病例信息页(姓名、性别、年龄、既往史、个人史、会诊目的)
+      * medical:diagnosis-list-slide - 诊断信息页(诊断列表及时间)
+      * medical:lab-test-table-slide - 实验室检查表格页
+      * medical:metric-trends-slide - 关键指标趋势图页
+      * medical:imaging-table-slide - 影像学检查表格页
+      * medical:imaging-comparison-slide - 影像学对比页(支持多张图片)
+      * medical:treatment-history-slide - 治疗历史表格页
+      * medical:timeline-slide - 患者疾病旅程时间轴页
+      * medical:treatment-gantt-slide - 治疗甘特图页(显示患者治疗时间线甘特图)
+
+    **重要提醒:**
+    - 不要直接输出slides_data内容，必须通过工具调用生成PPT文件
+    - 严格使用 "Action: Generate Medical Case PowerPoint Presentation" 和 "Action Input: {{...}}" 格式
+    - 只使用患者数据中真实存在的信息，不要编造数据
+
+    输入:
+    [系统日期]: {current_date}
+    [患者结构化数据]: {patient_structured_data}
+    [患者姓名]: {patient_name}
+    [模板信息]: {template_info}
+    [会话ID]: {session_id}
+    [患者时间旅程图片URL]: {patient_journey_image_url}
+    [患者时间旅程图片路径]: {patient_journey_image_path}
+    [核心指标趋势图片]: {indicator_chart_images}
+    [治疗甘特图URL]: {treatment_gantt_chart_url}
+    [治疗甘特图路径]: {treatment_gantt_chart_path}
+
+
+  expected_output: >
+    必须调用工具后，根据工具返回结果输出JSON格式:
+    {{
+      "success": true,
+      "local_path": "本地PPTX文件路径",
+      "filename": "生成的文件名",
+      "file_uuid": "七牛云文件的唯一标识",
+      "file_key": "七牛云文件的完整路径",
+      "qiniu_url": "七牛云公开下载链接"
+    }}
+
+    如果失败:
+    {{
+      "success": false,
+      "error": "错误信息"
+    }}
+
+  agent: ppt_content_generator
+
+transform_and_generate_ppt_task:
+  description: >
+    你的任务是将患者结构化数据转换为Suvalue API格式，并调用工具生成医疗病例PPT文件。
+
+    **工作流程:**
+
+    步骤1: 获取PPT模板信息
+    - 调用 "SuvaluePPTTemplateTool" 工具获取模板信息,type=2
+    - 模板信息包含了需要填写的字段结构和字段说明
+
+    步骤2: 转换患者数据并生成PPT
+    - 根据步骤一获取的"SuvaluePPTTemplateTool"的结果，模板信息将 患者相关数据 转换为 SuvaluePPTTemplateTool 获取的模板格式，作为"SuvalueGeneratePPTTool" 工具的输入参数 ppt_data，调用 "SuvalueGeneratePPTTool" 工具生成PPT
+    - 确保所有图片URLs是完整的URL（包含http://或https://）
+    - template_type 为 2
+
+    **注意事项:**
+    - 只使用患者数据中真实存在的信息，不要编造数据
+    - 对于医学原始文件的图像，除非模板里有特殊要求，否则不要用[患者时间轴数据]里的图，而是从[原始文件数据]中选择，注意只选择图片格式的，pdf格式的不选取，优先选取'has_medical_image'为True有医学影像的图。
+    - 患者时间旅程图片、核心指标趋势图片和治疗甘特图已经预先生成好，请直接使用提供的URL
+
+    输入:
+    [系统日期]: {current_date}
+    [患者时间轴数据]: {patient_timeline}
+    [原始文件数据]: {raw_files_data}
+    [患者姓名]: {patient_name}
+    [会话ID]: {session_id}
+    [患者时间旅程图片URL]: {patient_journey_image_url}
+    [核心指标趋势图片]: {indicator_chart_images}
+    [治疗甘特图URL]: {treatment_gantt_chart_url}
+
+
+  expected_output: >
+    必须调用工具后，根据SuvalueGeneratePPTTool工具返回结果输出JSON格式，不要自己编造数据:
+    {{
+      "success": true,
+      "ppt_url": "PPT下载链接（完整URL）",
+      "message": "PPT生成成功"
+    }}
+
+    如果失败:
+    {{
+      "success": false,
+      "error": "错误信息"
+    }}
+
+  agent: suvalue_ppt_data_transformer
+
+

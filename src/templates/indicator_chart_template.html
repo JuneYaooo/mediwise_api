@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>核心指标趋势图</title>
+    <!-- 本地Chart.js库 -->
+    <script>{{CHARTJS_PLACEHOLDER}}</script>
+    <style>
+        /* 如果有本地字体，使用本地字体 */
+        {{FONT_FACE_CSS}}
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'CustomChinese', 'Microsoft YaHei', '微软雅黑', 'PingFang SC', 'Hiragino Sans GB', Arial, sans-serif;
+            background: #ffffff;
+            padding: 40px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 3px solid #6366f1;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            color: #1f2937;
+            margin-bottom: 8px;
+        }
+
+        .header .subtitle {
+            font-size: 16px;
+            color: #6b7280;
+        }
+
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 30px;
+            padding: 15px;
+            background: #f9fafb;
+            border-radius: 8px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 18px;
+            color: #374151;
+        }
+
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .legend-dot.normal {
+            background: #10b981;
+        }
+
+        .legend-dot.abnormal {
+            background: #dc2626;
+        }
+
+        .legend-area {
+            width: 30px;
+            height: 12px;
+            background: rgba(220, 252, 231, 0.5);
+            border: 1px solid #22c55e;
+            border-radius: 2px;
+        }
+
+        .charts-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+        }
+
+        .chart-container {
+            background: #ffffff;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            width: 100%;
+        }
+
+        .chart-header {
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .chart-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 8px;
+        }
+
+        .chart-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .chart-unit {
+            font-size: 18px;
+            color: #6b7280;
+        }
+
+        .chart-stats {
+            display: flex;
+            gap: 15px;
+        }
+
+        .stat-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        .stat-badge.normal {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .stat-badge.abnormal {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .stat-badge.latest {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .chart-canvas-wrapper {
+            position: relative;
+            height: 500px;
+            margin-top: 20px;
+        }
+
+        .normal-range-info {
+            margin-top: 15px;
+            padding: 12px;
+            background: #dcfce7;
+            border: 1px solid #22c55e;
+            border-radius: 8px;
+            font-size: 17px;
+            color: #166534;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 60px;
+            color: #9ca3af;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="main-container">
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-dot normal"></div>
+                <span>正常值</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot abnormal"></div>
+                <span>异常值</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-area"></div>
+                <span>正常范围</span>
+            </div>
+        </div>
+
+        <div class="charts-grid" id="charts-container">
+            <!-- Charts will be generated here -->
+        </div>
+    </div>
+
+    <script>
+        const indicatorData = {{DATA_PLACEHOLDER}};
+        const patientName = "{{PATIENT_NAME}}";
+
+        // Color palette for different indicators
+        const colors = [
+            '#3b82f6', // blue
+            '#10b981', // emerald
+            '#f59e0b', // amber
+            '#8b5cf6', // violet
+            '#06b6d4', // cyan
+            '#84cc16', // lime
+            '#f97316', // orange
+            '#64748b', // slate
+        ];
+
+        function formatDate(dateStr) {
+            try {
+                const date = new Date(dateStr);
+                return date.toLocaleDateString('zh-CN', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                });
+            } catch {
+                return dateStr;
+            }
+        }
+
+        function createChart(indicator, colorIndex) {
+            const color = colors[colorIndex % colors.length];
+            const container = document.getElementById('charts-container');
+
+            // Create chart container
+            const chartDiv = document.createElement('div');
+            chartDiv.className = 'chart-container';
+
+            // Calculate statistics
+            const values = indicator.series.map(p => p.value);
+            const abnormalCount = indicator.series.filter(p => p.is_abnormal).length;
+            const normalCount = indicator.series.length - abnormalCount;
+            const latestValue = values[values.length - 1];
+
+            // Check if latest value is in normal range
+            let isCurrentNormal = null;
+            if (indicator.normal_min !== undefined && indicator.normal_max !== undefined) {
+                isCurrentNormal = latestValue >= indicator.normal_min && latestValue <= indicator.normal_max;
+            }
+
+            // Create header
+            const header = document.createElement('div');
+            header.className = 'chart-header';
+            header.innerHTML = `
+                <div class="chart-title">${indicator.name}</div>
+                <div class="chart-meta">
+                    <div class="chart-unit">${indicator.unit || ''}</div>
+                    <div class="chart-stats">
+                        <span class="stat-badge latest">
+                            最新: ${latestValue}${indicator.unit || ''}
+                            ${isCurrentNormal !== null ? (isCurrentNormal ? '(正常)' : '(异常)') : ''}
+                        </span>
+                        ${normalCount > 0 ? `<span class="stat-badge normal">${normalCount}个正常值</span>` : ''}
+                        ${abnormalCount > 0 ? `<span class="stat-badge abnormal">${abnormalCount}个异常值</span>` : ''}
+                    </div>
+                </div>
+            `;
+
+            // Create canvas
+            const canvasWrapper = document.createElement('div');
+            canvasWrapper.className = 'chart-canvas-wrapper';
+            const canvas = document.createElement('canvas');
+            canvasWrapper.appendChild(canvas);
+
+            chartDiv.appendChild(header);
+            chartDiv.appendChild(canvasWrapper);
+
+            // Add normal range info if available
+            if (indicator.normal_min !== undefined && indicator.normal_max !== undefined) {
+                const rangeInfo = document.createElement('div');
+                rangeInfo.className = 'normal-range-info';
+                rangeInfo.innerHTML = `
+                    <span>正常范围: ${indicator.normal_min} - ${indicator.normal_max} ${indicator.unit || ''}</span>
+                    <span>正常值: ${normalCount}个 | 异常值: ${abnormalCount}个</span>
+                `;
+                chartDiv.appendChild(rangeInfo);
+            }
+
+            container.appendChild(chartDiv);
+
+            // Prepare chart data
+            const chartData = {
+                labels: indicator.series.map(p => formatDate(p.time)),
+                datasets: [{
+                    label: indicator.name,
+                    data: indicator.series.map(p => p.value),
+                    borderColor: color,
+                    backgroundColor: color + '20',
+                    borderWidth: 2,
+                    pointRadius: indicator.series.map(p => p.is_abnormal ? 6 : 3),
+                    pointBackgroundColor: indicator.series.map(p => p.is_abnormal ? '#dc2626' : color),
+                    pointBorderColor: indicator.series.map(p => p.is_abnormal ? '#dc2626' : color),
+                    pointBorderWidth: 2,
+                    tension: 0.3,
+                    fill: false
+                }]
+            };
+
+            // Configure chart options
+            const options = {
+                responsive: true,
+                maintainAspectRatio: false,
+                layout: {
+                    padding: {
+                        top: 40,
+                        right: 30,
+                        bottom: 10,
+                        left: 10
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                        titleColor: '#1f2937',
+                        bodyColor: '#4b5563',
+                        borderColor: '#e5e7eb',
+                        borderWidth: 1,
+                        padding: 12,
+                        displayColors: false,
+                        callbacks: {
+                            title: function(context) {
+                                return '时间: ' + context[0].label;
+                            },
+                            label: function(context) {
+                                const value = context.parsed.y;
+                                const isAbnormal = indicator.series[context.dataIndex].is_abnormal;
+                                let label = `${indicator.name}: ${value}${indicator.unit || ''}`;
+                                if (isAbnormal) {
+                                    label += ' ⚠️ 异常';
+                                }
+                                return label;
+                            },
+                            afterLabel: function(context) {
+                                if (indicator.normal_min !== undefined && indicator.normal_max !== undefined) {
+                                    const value = context.parsed.y;
+                                    const isInRange = value >= indicator.normal_min && value <= indicator.normal_max;
+                                    return `正常范围: ${indicator.normal_min} - ${indicator.normal_max}${indicator.unit || ''}\n${isInRange ? '✓ 正常' : '✗ 异常'}`;
+                                }
+                                return '';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            color: '#f3f4f6',
+                            drawBorder: false
+                        },
+                        ticks: {
+                            color: '#6b7280',
+                            font: {
+                                size: 15
+                            },
+                            maxRotation: 45,
+                            minRotation: 45
+                        }
+                    },
+                    y: {
+                        grid: {
+                            color: '#f3f4f6',
+                            drawBorder: false
+                        },
+                        ticks: {
+                            color: '#6b7280',
+                            font: {
+                                size: 16
+                            }
+                        }
+                    }
+                }
+            };
+
+            // Add annotation plugin for normal range if available
+            if (indicator.normal_min !== undefined && indicator.normal_max !== undefined) {
+                if (!options.plugins.annotation) {
+                    options.plugins.annotation = {
+                        annotations: {}
+                    };
+                }
+
+                // Add normal range as a box annotation
+                options.plugins.annotation.annotations.normalRange = {
+                    type: 'box',
+                    yMin: indicator.normal_min,
+                    yMax: indicator.normal_max,
+                    backgroundColor: 'rgba(220, 252, 231, 0.3)',
+                    borderColor: 'rgba(34, 197, 94, 0.5)',
+                    borderWidth: 1,
+                    borderDash: [4, 4]
+                };
+
+                // Add reference lines
+                options.plugins.annotation.annotations.minLine = {
+                    type: 'line',
+                    yMin: indicator.normal_min,
+                    yMax: indicator.normal_min,
+                    borderColor: '#22c55e',
+                    borderWidth: 1.5,
+                    borderDash: [5, 5],
+                    label: {
+                        display: true,
+                        content: `正常下限: ${indicator.normal_min}`,
+                        position: 'start',
+                        backgroundColor: 'rgba(34, 197, 94, 0.8)',
+                        color: '#ffffff',
+                        font: {
+                            size: 14
+                        }
+                    }
+                };
+
+                options.plugins.annotation.annotations.maxLine = {
+                    type: 'line',
+                    yMin: indicator.normal_max,
+                    yMax: indicator.normal_max,
+                    borderColor: '#22c55e',
+                    borderWidth: 1.5,
+                    borderDash: [5, 5],
+                    label: {
+                        display: true,
+                        content: `正常上限: ${indicator.normal_max}`,
+                        position: 'start',
+                        backgroundColor: 'rgba(34, 197, 94, 0.8)',
+                        color: '#ffffff',
+                        font: {
+                            size: 14
+                        }
+                    }
+                };
+            }
+
+            // 自定义插件：在每个数据点上方显示数值标签
+            const dataLabelsPlugin = {
+                id: 'dataLabelsPlugin',
+                afterDatasetsDraw(chart) {
+                    const ctx = chart.ctx;
+                    const chartArea = chart.chartArea;
+
+                    chart.data.datasets.forEach((dataset, datasetIndex) => {
+                        const meta = chart.getDatasetMeta(datasetIndex);
+                        if (!meta.hidden) {
+                            meta.data.forEach((element, index) => {
+                                const value = dataset.data[index];
+                                const isAbnormal = indicator.series[index].is_abnormal;
+
+                                // 设置文本样式
+                                ctx.save();
+                                ctx.font = '600 15px "CustomChinese", "Microsoft YaHei", sans-serif';
+                                ctx.textAlign = 'center';
+                                ctx.textBaseline = 'bottom';
+
+                                // 文本内容
+                                const text = value + (indicator.unit || '');
+                                const textWidth = ctx.measureText(text).width;
+                                const textHeight = 16;
+                                const padding = { top: 4, right: 6, bottom: 4, left: 6 };
+
+                                // 计算标签总尺寸
+                                const labelWidth = textWidth + padding.left + padding.right;
+                                const labelHeight = textHeight + padding.top + padding.bottom;
+
+                                // 基础位置：数据点上方
+                                let x = element.x;
+                                let y = element.y - 8;
+                                let align = 'top'; // 默认在上方
+
+                                // 检查是否超出顶部边界，如果超出则显示在下方
+                                if (y - labelHeight < chartArea.top) {
+                                    y = element.y + 8;
+                                    align = 'bottom';
+                                    ctx.textBaseline = 'top';
+                                }
+
+                                // 检查是否超出右边界
+                                if (x + labelWidth / 2 > chartArea.right) {
+                                    x = chartArea.right - labelWidth / 2;
+                                }
+
+                                // 检查是否超出左边界
+                                if (x - labelWidth / 2 < chartArea.left) {
+                                    x = chartArea.left + labelWidth / 2;
+                                }
+
+                                // 计算背景框位置
+                                const bgX = x - textWidth / 2 - padding.left;
+                                const bgY = align === 'top' ? y - textHeight - padding.top : y + padding.top;
+                                const bgWidth = labelWidth;
+                                const bgHeight = labelHeight;
+
+                                // 背景颜色和边框
+                                ctx.fillStyle = isAbnormal ? 'rgba(220, 38, 38, 0.1)' : 'rgba(255, 255, 255, 0.9)';
+                                ctx.strokeStyle = isAbnormal ? '#dc2626' : '#d1d5db';
+                                ctx.lineWidth = 1;
+
+                                // 绘制圆角矩形背景
+                                const radius = 4;
+                                ctx.beginPath();
+                                ctx.moveTo(bgX + radius, bgY);
+                                ctx.lineTo(bgX + bgWidth - radius, bgY);
+                                ctx.quadraticCurveTo(bgX + bgWidth, bgY, bgX + bgWidth, bgY + radius);
+                                ctx.lineTo(bgX + bgWidth, bgY + bgHeight - radius);
+                                ctx.quadraticCurveTo(bgX + bgWidth, bgY + bgHeight, bgX + bgWidth - radius, bgY + bgHeight);
+                                ctx.lineTo(bgX + radius, bgY + bgHeight);
+                                ctx.quadraticCurveTo(bgX, bgY + bgHeight, bgX, bgY + bgHeight - radius);
+                                ctx.lineTo(bgX, bgY + radius);
+                                ctx.quadraticCurveTo(bgX, bgY, bgX + radius, bgY);
+                                ctx.closePath();
+                                ctx.fill();
+                                ctx.stroke();
+
+                                // 绘制文本
+                                ctx.fillStyle = isAbnormal ? '#dc2626' : '#374151';
+                                ctx.fillText(text, x, y);
+
+                                ctx.restore();
+                            });
+                        }
+                    });
+                }
+            };
+
+            // Create chart
+            new Chart(canvas, {
+                type: 'line',
+                data: chartData,
+                options: options,
+                plugins: [dataLabelsPlugin]
+            });
+        }
+
+        // Generate all charts
+        function initCharts() {
+            if (!indicatorData || indicatorData.length === 0) {
+                document.getElementById('charts-container').innerHTML = '<div class="no-data">暂无指标数据</div>';
+                return;
+            }
+
+            indicatorData.forEach((indicator, index) => {
+                createChart(indicator, index);
+            });
+
+            // Mark as ready for screenshot
+            document.body.classList.add('charts-ready');
+        }
+
+        // Wait for Chart.js to load then initialize
+        function initializeCharts() {
+            if (typeof Chart !== 'undefined') {
+                console.log('Chart.js loaded, initializing charts...');
+
+                // Configure Chart.js defaults for Chinese fonts
+                Chart.defaults.font.family = "'CustomChinese', 'Microsoft YaHei', '微软雅黑', 'PingFang SC', 'Hiragino Sans GB', Arial, sans-serif";
+
+                // Initialize charts
+                initCharts();
+            } else {
+                console.error('Chart.js not loaded');
+            }
+        }
+
+        // Wait for window load event to ensure all external resources are loaded
+        if (document.readyState === 'complete') {
+            initializeCharts();
+        } else {
+            window.addEventListener('load', initializeCharts);
+        }
+    </script>
+</body>
+</html>

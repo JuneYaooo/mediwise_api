@@ -1,0 +1,24 @@
+/* 使用系统安全字体 */
+@font-face {
+    font-family: 'System-UI';
+    src: local('Arial Unicode MS'),
+         local('Arial'),
+         local('Liberation Sans'),
+         local('DejaVu Sans');
+    font-weight: normal;
+    font-style: normal;
+}
+
+/* 为中文提供降级方案 */
+body, * {
+    font-family: 'System-UI', system-ui, -apple-system, BlinkMacSystemFont,
+                 'Segoe UI', Arial, sans-serif !important;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* 强制渲染所有字符 */
+* {
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "kern" 1;
+}
