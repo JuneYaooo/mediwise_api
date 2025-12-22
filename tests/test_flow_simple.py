@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-混合智能接口测试脚本（无需认证版本）
+混合智能接口测试脚本
 
 测试场景：客户端中途断开（后台继续执行）
 - 客户端发起请求，接收几条进度消息
@@ -9,7 +9,7 @@
 - 稍后通过task_id查询任务状态和结果
 
 使用说明：
-此版本使用测试接口，无需认证即可测试
+调用正式接口，当前版本暂无需认证
 """
 
 import requests
@@ -22,7 +22,7 @@ import pytz
 import time
 
 # 配置
-API_BASE_URL = "http://localhost:9527"
+API_BASE_URL = "http://182.254.240.153:9527" #"http://localhost:9527"
 CASE_DIR = "/home/ubuntu/data/patient_case/liyunshan/"
 
 
@@ -96,11 +96,11 @@ def test_scenario_2_disconnect(files):
         "files": files
     }
 
-    print(f"\n📤 发送请求到测试接口（无需认证）... ({get_beijing_time()})\n")
+    print(f"\n📤 发送请求... ({get_beijing_time()})\n")
 
     try:
         response = requests.post(
-            f"{API_BASE_URL}/api/patient_data/process_patient_data_smart_test",
+            f"{API_BASE_URL}/api/patient_data/process_patient_data_smart",
             headers=headers,
             json=payload,
             stream=True,
@@ -175,7 +175,7 @@ def test_scenario_2_disconnect(files):
 
         for i in range(20):  # 最多查询20次
             status_response = requests.get(
-                f"{API_BASE_URL}/api/patient_data/task_status_test/{task_id}"
+                f"{API_BASE_URL}/api/patient_data/task_status/{task_id}"
             )
 
             if status_response.status_code == 200:
@@ -228,11 +228,11 @@ def test_scenario_2_disconnect(files):
 def main():
     """主测试流程"""
     print("\n" + "=" * 80)
-    print("🧪 混合智能接口测试 - 客户端断开后台继续执行（无需认证）")
+    print("🧪 混合智能接口测试 - 客户端断开后台继续执行")
     print("=" * 80)
     print(f"API 地址: {API_BASE_URL}")
     print(f"病例目录: {CASE_DIR}")
-    print(f"认证方式: 无需认证（使用测试接口）\n")
+    print(f"认证方式: 暂无需认证\n")
 
     print("💡 提示：")
     print("   - 本脚本只测试患者数据处理（支持断开重连）")

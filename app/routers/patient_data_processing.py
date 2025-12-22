@@ -348,7 +348,6 @@ async def process_patient_data_async(
 @router.get("/task_status/{task_id}")
 async def get_task_status(
     task_id: str,
-    current_user: UserModel = Depends(get_current_user),
 ) -> Any:
     """
     查询任务状态
@@ -367,16 +366,7 @@ async def get_task_status(
             detail="任务不存在"
         )
 
-    task_status = task_status_store[task_id]
-
-    # 验证任务归属
-    if task_status.get("user_id") != str(current_user.id):
-        raise HTTPException(
-            status_code=403,
-            detail="无权访问此任务"
-        )
-
-    return task_status
+    return task_status_store[task_id]
 
 
 # ============================================================================
@@ -879,7 +869,6 @@ async def process_patient_data_smart(
     request: Dict[str, Any],
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
 ) -> Any:
     """
     混合智能接口：既能实时流式返回，又能在客户端断开后继续执行
@@ -924,13 +913,16 @@ async def process_patient_data_smart(
         # 生成任务ID
         task_id = str(uuid.uuid4())
 
+        # 使用固定用户ID（暂无认证）
+        user_id = "system_user"
+
         # 初始化任务状态
         task_status_store[task_id] = {
             "status": "pending",
             "progress": 0,
             "message": "任务已创建",
             "start_time": time.time(),
-            "user_id": str(current_user.id),
+            "user_id": user_id,
             "patient_description": patient_description,
             "consultation_purpose": consultation_purpose,
             "files": files
@@ -939,7 +931,7 @@ async def process_patient_data_smart(
         # 初始化任务锁
         task_locks[task_id] = False
 
-        logger.info(f"用户 {current_user.id} 创建混合任务 {task_id}，包含 {len(files)} 个文件")
+        logger.info(f"用户 {user_id} 创建混合任务 {task_id}，包含 {len(files)} 个文件")
 
         # 返回流式响应
         response = StreamingResponse(
@@ -948,7 +940,7 @@ async def process_patient_data_smart(
                 patient_description=patient_description,
                 consultation_purpose=consultation_purpose,
                 files=files,
-                user_id=str(current_user.id),
+                user_id=user_id,
                 background_tasks=background_tasks,
                 db=db
             ),
@@ -1581,130 +1573,4 @@ async def clear_conversation_history(
         "status": "not_found",
         "message": "该会话没有对话历史"
     }
-
-
-# ============================================================================
-# 测试接口（无需认证）- 仅用于开发测试
-# ============================================================================
-
-@router.post("/process_patient_data_smart_test")
-async def process_patient_data_smart_test(
-    request: Dict[str, Any],
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-) -> Any:
-    """
-    混合智能接口 - 测试版本（无需认证）
-
-    ⚠️ 警告：此接口仅用于开发测试，生产环境请使用 /process_patient_data_smart
-
-    功能与 /process_patient_data_smart 完全相同，但不需要认证
-    """
-    try:
-        # 获取用户输入
-        patient_description = request.get("patient_description", "")
-        consultation_purpose = request.get("consultation_purpose", "")
-        files = request.get("files", [])
-
-        # 验证输入
-        if not patient_description or not consultation_purpose:
-            raise HTTPException(
-                status_code=400,
-                detail="patient_description 和 consultation_purpose 是必填项",
-            )
-
-        if not files:
-            raise HTTPException(
-                status_code=400,
-                detail="files 不能为空，必须上传至少一个文件",
-            )
-
-        # 生成任务ID
-        task_id = str(uuid.uuid4())
-
-        # 使用测试用户ID
-        test_user_id = "test_user"
-
-        # 初始化任务状态
-        task_status_store[task_id] = {
-            "status": "pending",
-            "progress": 0,
-            "message": "任务已创建",
-            "start_time": time.time(),
-            "user_id": test_user_id,
-            "patient_description": patient_description,
-            "consultation_purpose": consultation_purpose,
-            "files": files
-        }
-
-        # 初始化任务锁
-        task_locks[task_id] = False
-
-        logger.info(f"测试用户创建混合任务 {task_id}，包含 {len(files)} 个文件")
-
-        # 返回流式响应
-        response = StreamingResponse(
-            smart_stream_patient_data_processing(
-                task_id=task_id,
-                patient_description=patient_description,
-                consultation_purpose=consultation_purpose,
-                files=files,
-                user_id=test_user_id,
-                background_tasks=background_tasks,
-                db=db
-            ),
-            media_type="text/event-stream"
-        )
-
-        # 关键：禁用缓冲，确保实时流式传输
-        response.headers["Cache-Control"] = "no-cache"
-        response.headers["X-Accel-Buffering"] = "no"
-
-        return response
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"创建测试任务时出错: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(
-            status_code=500,
-            detail=f"创建测试任务失败: {str(e)}"
-        )
-
-
-@router.get("/task_status_test/{task_id}")
-async def get_task_status_test(task_id: str) -> Any:
-    """
-    查询任务状态 - 测试版本（无需认证）
-
-    ⚠️ 警告：此接口仅用于开发测试，生产环境请使用 /task_status/{task_id}
-    """
-    if task_id not in task_status_store:
-        raise HTTPException(
-            status_code=404,
-            detail="任务不存在"
-        )
-
-    return task_status_store[task_id]
-
-
-@router.post("/generate_ppt_test")
-async def generate_ppt_test(
-    request: Dict[str, Any],
-    db: Session = Depends(get_db),
-) -> Any:
-    """
-    PPT生成接口 - 测试版本（无需认证）- 已废弃
-
-    ⚠️ 此接口已废弃，请使用新的基于 patient_id 的接口:
-       POST /api/patients/{patient_id}/generate_ppt
-
-    此接口仅保留用于向后兼容
-    """
-    raise HTTPException(
-        status_code=410,
-        detail="此接口已废弃，请使用 POST /api/patients/{patient_id}/generate_ppt"
-    )
 
