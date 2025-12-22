@@ -7,9 +7,10 @@ import json
 import os
 import uuid
 import base64
+import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
 from src.utils.logger import BeijingLogger
 
 logger = BeijingLogger().get_logger()
@@ -119,7 +120,7 @@ class PatientJourneyImageGenerator:
 
         return html_content
 
-    def generate_image(
+    async def generate_image(
         self,
         patient_journey_data: List[Dict[str, Any]],
         output_path: str,
@@ -160,8 +161,8 @@ class PatientJourneyImageGenerator:
             logger.info(f"临时HTML文件已创建: {temp_html_path}")
 
             # 使用Playwright渲染并截图
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
                     headless=True,
                     args=[
                         '--font-render-hinting=none',
@@ -174,33 +175,33 @@ class PatientJourneyImageGenerator:
                 )
 
                 # 创建上下文和页面
-                context = browser.new_context(
+                context = await browser.new_context(
                     viewport={'width': viewport_width, 'height': viewport_height},
                     device_scale_factor=2  # 2倍缩放，提高清晰度
                 )
-                page = context.new_page()
+                page = await context.new_page()
 
                 # 添加控制台日志监听（用于调试）
                 page.on('console', lambda msg: logger.debug(f"Browser console: {msg.text}"))
 
                 # 加载HTML文件 - 等待网络资源和外部字体加载
                 logger.info("加载HTML页面...")
-                page.goto(f'file://{temp_html_path.absolute()}', timeout=30000, wait_until='networkidle')
+                await page.goto(f'file://{temp_html_path.absolute()}', timeout=30000, wait_until='networkidle')
                 logger.info("HTML页面加载完成")
 
                 # 等待Google Fonts加载
                 try:
-                    page.wait_for_load_state('networkidle', timeout=5000)
+                    await page.wait_for_load_state('networkidle', timeout=5000)
                 except:
                     logger.warning("等待网络空闲超时，继续渲染")
 
                 # 等待页面渲染完成
-                page.wait_for_timeout(2000)  # 等待2秒确保字体和渲染完成
+                await page.wait_for_timeout(2000)  # 等待2秒确保字体和渲染完成
                 logger.info("页面渲染完成")
 
                 # 获取实际内容高度和宽度
                 chart_container = page.locator('#chartContainer')
-                chart_box = chart_container.bounding_box()
+                chart_box = await chart_container.bounding_box()
 
                 if chart_box:
                     chart_height = chart_box['height']
@@ -211,12 +212,12 @@ class PatientJourneyImageGenerator:
 
                 # 截取整个容器（包含padding以确保不裁剪）
                 container = page.locator('.container')
-                container.screenshot(path=output_path, type='png', omit_background=True)
+                await container.screenshot(path=output_path, type='png', omit_background=True)
 
                 logger.info(f"患者时间旅程图片已生成: {output_path}")
 
                 # 关闭浏览器
-                browser.close()
+                await browser.close()
 
             # 删除临时HTML文件
             if temp_html_path.exists():
@@ -249,7 +250,7 @@ async def generate_patient_journey_image(
         是否成功生成
     """
     generator = PatientJourneyImageGenerator()
-    return generator.generate_image(patient_journey_data, output_path, patient_name)
+    return await generator.generate_image(patient_journey_data, output_path, patient_name)
 
 
 def generate_patient_journey_image_sync(
@@ -269,4 +270,4 @@ def generate_patient_journey_image_sync(
         是否成功生成
     """
     generator = PatientJourneyImageGenerator()
-    return generator.generate_image(patient_journey_data, output_path, patient_name)
+    return asyncio.run(generator.generate_image(patient_journey_data, output_path, patient_name))
