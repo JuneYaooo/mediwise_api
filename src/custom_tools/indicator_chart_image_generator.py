@@ -8,6 +8,7 @@ Indicator Chart Image Generator Tool
 import json
 import tempfile
 import base64
+import os
 from pathlib import Path
 from typing import List, Dict, Optional
 from playwright.sync_api import sync_playwright
@@ -49,8 +50,9 @@ class IndicatorChartImageGenerator:
 
     def _generate_font_face_css(self) -> str:
         """生成@font-face CSS代码 - 使用文件路径而不是base64内联"""
-        # 使用指定的中文字体路径
-        font_path = Path("/home/ubuntu/font/SiYuanHeiTi-Regular/SourceHanSansSC-Regular-2.otf")
+        # 从环境变量获取中文字体路径
+        font_path_str = os.getenv("CHINESE_FONT_PATH", "/home/ubuntu/font/SiYuanHeiTi-Regular/SourceHanSansSC-Regular-2.otf")
+        font_path = Path(font_path_str)
 
         if not font_path.exists():
             logger.warning(f"指定的字体文件不存在: {font_path}，将尝试查找其他字体")
