@@ -1904,3 +1904,408 @@ async def clear_conversation_history(
         "message": "该会话没有对话历史"
     }
 
+
+# ============================================================================
+# 患者数据修改接口（基于patient_id）
+# ============================================================================
+
+@router.post("/modify_patient_data")
+async def modify_patient_data(
+    request: Dict[str, Any],
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> Any:
+    """
+    修改患者数据接口
+
+    当提供patient_id时，会先查询现有患者数据，然后基于用户的修改需求进行更新
+    参考 /home/ubuntu/github/mediwise/app/agents/medical_graph_stream.py 中的 modify_patient_info 逻辑
+
+    请求参数:
+        - patient_id: 患者ID（必填）
+        - modification_request: 修改需求描述（必填，例如："将患者年龄修改为45岁"）
+        - files: 补充文件列表（可选）
+
+    返回:
+        流式响应（Server-Sent Events格式），第一条消息包含task_id
+
+    使用场景:
+        1. 修改患者的基本信息（姓名、年龄、性别等）
+        2. 更新患者的疾病信息、用药记录等
+        3. 补充或修正患者的检查结果
+    """
+    try:
+        # 获取用户输入
+        patient_id = request.get("patient_id", "").strip()
+        modification_request = request.get("modification_request", "").strip()
+        files = request.get("files", [])
+
+        # 验证输入
+        if not patient_id:
+            raise HTTPException(
+                status_code=400,
+                detail="patient_id 是必填项"
+            )
+
+        if not modification_request:
+            raise HTTPException(
+                status_code=400,
+                detail="modification_request 是必填项"
+            )
+
+        # 查询患者是否存在
+        from app.models.bus_models import Patient
+        patient = db.query(Patient).filter(
+            Patient.patient_id == patient_id,
+            Patient.is_deleted == False
+        ).first()
+
+        if not patient:
+            raise HTTPException(
+                status_code=404,
+                detail=f"患者不存在: {patient_id}"
+            )
+
+        logger.info(f"修改患者数据请求 - patient_id: {patient_id}, 修改需求: {modification_request[:100]}")
+
+        # 获取现有患者数据
+        from app.models.patient_detail_helpers import PatientDetailHelper
+        existing_patient_detail = PatientDetailHelper.get_latest_patient_detail_by_patient_id(db, patient_id)
+
+        if not existing_patient_detail:
+            raise HTTPException(
+                status_code=400,
+                detail=f"患者 {patient_id} 还没有结构化数据，请先使用 /process_patient_data_smart 接口生成初始数据"
+            )
+
+        # 获取现有患者的完整数据
+        existing_patient_timeline = PatientDetailHelper.get_patient_timeline(existing_patient_detail) or {}
+        existing_patient_journey = PatientDetailHelper.get_patient_journey(existing_patient_detail) or {}
+        existing_mdt_report = PatientDetailHelper.get_mdt_simple_report(existing_patient_detail) or {}
+        existing_patient_full_content = PatientDetailHelper.get_patient_full_content(existing_patient_detail) or ""
+
+        logger.info(f"已查询到患者 {patient_id} 的现有数据")
+
+        # 生成任务ID
+        task_id = str(uuid.uuid4())
+
+        # 初始化任务状态
+        task_status_store[task_id] = {
+            "status": "pending",
+            "progress": 0,
+            "message": "任务已创建",
+            "start_time": time.time(),
+            "user_id": str(current_user.id),
+            "patient_id": patient_id,
+            "modification_request": modification_request,
+            "files": files,
+            "is_modification": True
+        }
+
+        # 初始化任务锁
+        task_locks[task_id] = False
+
+        logger.info(f"用户 {current_user.id} 创建患者数据修改任务 {task_id}，patient_id: {patient_id}")
+
+        # 返回流式响应
+        response = StreamingResponse(
+            smart_stream_patient_modification(
+                task_id=task_id,
+                patient_id=patient_id,
+                modification_request=modification_request,
+                files=files,
+                user_id=str(current_user.id),
+                background_tasks=background_tasks,
+                db=db,
+                existing_timeline=existing_patient_timeline,
+                existing_journey=existing_patient_journey,
+                existing_mdt_report=existing_mdt_report,
+                existing_full_content=existing_patient_full_content
+            ),
+            media_type="text/event-stream"
+        )
+
+        # 关键：禁用缓冲，确保实时流式传输
+        response.headers["Cache-Control"] = "no-cache"
+        response.headers["X-Accel-Buffering"] = "no"
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"创建患者数据修改任务时出错: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"创建患者数据修改任务失败: {str(e)}"
+        )
+
+
+async def smart_stream_patient_modification(
+    task_id: str,
+    patient_id: str,
+    modification_request: str,
+    files: list,
+    user_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session,
+    existing_timeline: dict,
+    existing_journey: dict,
+    existing_mdt_report: dict,
+    existing_full_content: str
+):
+    """
+    混合智能患者数据修改处理：既流式返回，又能在断开后继续执行
+
+    参考 medical_graph_stream.py 中的 modify_patient_info 逻辑
+    核心区别：
+    1. 这里会先查询现有患者数据
+    2. 将现有数据作为 existing_patient_data 传入 PatientDataCrew
+    3. PatientInfoUpdateCrew 会基于现有数据进行更新
+    """
+    from src.crews.patient_info_update_crew.patient_info_update_crew import PatientInfoUpdateCrew
+    from app.utils.file_processing_manager import FileProcessingManager
+    from app.utils.file_metadata_builder import FileMetadataBuilder
+    from app.models.bus_patient_helpers import BusPatientHelper
+    from app.models.bus_models import PatientConversation, Patient
+    import asyncio
+
+    conversation = None
+    try:
+        # 第一条消息：返回task_id
+        yield f"data: {json.dumps({'task_id': task_id, 'status': 'started', 'message': '开始修改患者数据', 'progress': 0}, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0)
+
+        logger.info(f"[修改任务 {task_id}] 开始流式处理，patient_id={patient_id}")
+
+        overall_start_time = time.time()
+
+        # 获取患者对象
+        patient = db.query(Patient).filter(
+            Patient.patient_id == patient_id,
+            Patient.is_deleted == False
+        ).first()
+
+        if not patient:
+            error_msg = f"患者不存在: {patient_id}"
+            logger.error(f"[修改任务 {task_id}] {error_msg}")
+            error_response = {'status': 'error', 'message': error_msg, 'error': 'patient_not_found'}
+            yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0)
+            task_status_store[task_id].update(error_response)
+            return
+
+        logger.info(f"[修改任务 {task_id}] 患者: {patient_id} ({patient.name})")
+
+        # 创建新的会话记录（用于本次修改操作）
+        session_id = f"modify_{task_id}"
+        title_desc = modification_request[:50] if modification_request else "数据修改"
+        title_suffix = '...' if len(title_desc) >= 50 else ''
+        conversation = BusPatientHelper.create_conversation(
+            db=db,
+            patient_id=patient.patient_id,
+            user_id=user_id,
+            title=f"修改 - {title_desc}{title_suffix}",
+            session_id=session_id,
+            conversation_type="modification"
+        )
+        db.commit()
+        conversation_id = conversation.id
+
+        logger.info(f"[修改任务 {task_id}] 会话记录: {conversation_id}")
+
+        # 保存到任务状态中
+        task_status_store[task_id].update({
+            "conversation_id": conversation_id
+        })
+
+        # ========== 文件处理 ==========
+        formatted_files = []
+        uploaded_file_ids = []
+        extracted_file_results = []
+
+        if files:
+            logger.info(f"[修改任务 {task_id}] 开始处理 {len(files)} 个文件")
+
+            progress_msg = {'status': 'processing', 'stage': 'file_processing', 'message': f'正在处理 {len(files)} 个文件', 'progress': 10}
+            yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0)
+            task_status_store[task_id].update(progress_msg)
+
+            file_manager = FileProcessingManager()
+            formatted_files, uploaded_file_ids, extracted_file_results = file_manager.process_files(
+                files, conversation_id
+            )
+
+            progress_msg = {'status': 'processing', 'stage': 'file_processing_completed', 'message': f'文件处理完成，共提取 {len(extracted_file_results)} 个文件', 'progress': 25}
+            yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0)
+            task_status_store[task_id].update(progress_msg)
+
+        # 构建文件元数据
+        raw_files_data = []
+        extraction_statistics = None
+        if extracted_file_results:
+            raw_files_data = FileMetadataBuilder.build_raw_files_data(extracted_file_results)
+            extraction_statistics = FileMetadataBuilder.collect_extraction_statistics(extracted_file_results)
+
+        # 准备传递给crew的文件信息
+        files_to_pass = []
+        if extracted_file_results:
+            files_to_pass = FileMetadataBuilder.build_file_info_for_api(extracted_file_results)
+        elif formatted_files:
+            files_to_pass = formatted_files
+
+        # ========== 患者数据修改处理 ==========
+        progress_msg = {'status': 'processing', 'stage': 'patient_data_modification', 'message': '正在修改患者数据', 'progress': 30}
+        yield f"data: {json.dumps(progress_msg)}\n\n"
+        await asyncio.sleep(0)
+        task_status_store[task_id].update(progress_msg)
+
+        # 构建现有患者数据结构
+        current_patient_data = {
+            "patient_timeline": existing_timeline,
+            "patient_journey": existing_journey,
+            "mdt_simple_report": existing_mdt_report
+        }
+
+        # 使用 PatientInfoUpdateCrew 进行修改（参考 modify_patient_info 逻辑）
+        update_crew = PatientInfoUpdateCrew()
+
+        # 调用异步任务（参考 modify_patient_info 中的调用方式）
+        logger.info(f"[修改任务 {task_id}] 调用 PatientInfoUpdateCrew")
+
+        # 定义一个简单的writer用于接收状态更新（不能用yield，因为不是生成器）
+        # 我们不需要实时流式传输crew内部的状态，只在完成后更新
+        def writer_func(message):
+            # 这里只记录日志，不做流式传输
+            if message.get("type") == "status":
+                logger.info(f"[修改任务 {task_id}] PatientInfoUpdateCrew状态: {message.get('status_msg')}")
+
+        # 调用异步方法（参考 medical_graph_stream.py:391-398）
+        result = await update_crew.task_async(
+            central_command="执行患者信息修改",
+            user_requirement=modification_request,
+            current_patient_data=current_patient_data,
+            writer=writer_func,
+            show_status_realtime=True,
+            agent_session_id=conversation_id
+        )
+
+        # 更新进度为80%
+        progress_msg = {'status': 'processing', 'stage': 'saving', 'message': '正在保存修改结果', 'progress': 80}
+        yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0)
+        task_status_store[task_id].update(progress_msg)
+
+        # 检查处理结果
+        if "error" in result:
+            error_msg = f"患者数据修改失败: {result['error']}"
+            logger.error(f"[修改任务 {task_id}] {error_msg}")
+
+            error_response = {'status': 'error', 'message': error_msg, 'error': result['error']}
+            yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0)
+            task_status_store[task_id].update(error_response)
+            return
+
+        # 更新患者数据到数据库
+        from app.models.patient_detail_helpers import PatientDetailHelper
+
+        # 获取最新的 patient_detail
+        patient_detail = PatientDetailHelper.get_latest_patient_detail_by_patient_id(db, patient_id)
+
+        if patient_detail:
+            # 合并文件数据（如果有新文件）
+            if raw_files_data:
+                existing_raw_files = PatientDetailHelper.get_raw_files_data(patient_detail) or []
+                merged_raw_files = existing_raw_files + raw_files_data
+
+                existing_file_ids = PatientDetailHelper.get_raw_file_ids(patient_detail) or []
+                merged_file_ids = list(set(existing_file_ids + uploaded_file_ids)) if uploaded_file_ids else existing_file_ids
+            else:
+                merged_raw_files = None
+                merged_file_ids = None
+
+            # 更新数据（result格式参考 patient_info_update_crew.py:742-744）
+            PatientDetailHelper.update_patient_detail(
+                db=db,
+                patient_detail=patient_detail,
+                raw_files_data=merged_raw_files,
+                raw_file_ids=merged_file_ids,
+                patient_timeline=result.get("full_structure_data"),
+                patient_journey=result.get("patient_journey"),
+                mdt_simple_report=result.get("mdt_simple_report"),
+                patient_full_content=result.get("patient_content"),
+                extraction_statistics=extraction_statistics
+            )
+            logger.info(f"[修改任务 {task_id}] 患者数据已更新到数据库")
+        else:
+            # 如果找不到现有数据，创建新的（不太可能发生，因为前面已经检查过）
+            PatientDetailHelper.create_patient_detail(
+                db=db,
+                conversation_id=conversation_id,
+                raw_text_data=modification_request,
+                raw_files_data=raw_files_data,
+                raw_file_ids=uploaded_file_ids,
+                patient_timeline=result.get("full_structure_data"),
+                patient_journey=result.get("patient_journey"),
+                mdt_simple_report=result.get("mdt_simple_report"),
+                patient_full_content=result.get("patient_content"),
+                extraction_statistics=extraction_statistics
+            )
+            logger.info(f"[修改任务 {task_id}] 患者数据已创建到数据库")
+
+        # 处理成功
+        overall_duration = time.time() - overall_start_time
+
+        final_result = {
+            "status": "completed",
+            "message": "患者数据修改完成",
+            "progress": 100,
+            "duration": overall_duration,
+            "result": {
+                "patient_id": patient.patient_id,
+                "conversation_id": conversation_id,
+                "uploaded_files_count": len(uploaded_file_ids),
+                "uploaded_file_ids": uploaded_file_ids,
+                "patient_timeline": result.get("full_structure_data", {}),
+                "patient_journey": result.get("patient_journey", {}),
+                "mdt_simple_report": result.get("mdt_simple_report", {}),
+                "patient_full_content": result.get("patient_content", "")
+            }
+        }
+
+        yield f"data: {json.dumps(final_result, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0)
+        task_status_store[task_id].update(final_result)
+
+        logger.info(f"[修改任务 {task_id}] 流式处理完成")
+
+    except asyncio.CancelledError:
+        # 客户端断开了
+        logger.warning(f"[修改任务 {task_id}] 检测到客户端断开，启动后台任务继续执行")
+
+        # 在后台继续执行（可以实现一个类似的后台任务函数）
+        # background_tasks.add_task(process_patient_modification_background_from_task, task_id)
+
+        # 重新抛出异常，让FastAPI知道连接已断开
+        raise
+
+    except Exception as e:
+        logger.error(f"[修改任务 {task_id}] 处理异常: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+        error_response = {
+            "status": "error",
+            "message": f"处理失败: {str(e)}",
+            "error": str(e)
+        }
+        yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0)
+        task_status_store[task_id].update(error_response)
+

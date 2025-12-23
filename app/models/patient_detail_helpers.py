@@ -113,6 +113,21 @@ class PatientDetailHelper:
         return structured_data
 
     @staticmethod
+    def get_latest_patient_detail_by_patient_id(
+        db: Session,
+        patient_id: str
+    ):
+        """根据patient_id获取最新的患者详情（timeline数据）"""
+        # 查询该患者最新的timeline数据
+        structured_data = db.query(PatientStructuredData).filter(
+            PatientStructuredData.patient_id == patient_id,
+            PatientStructuredData.data_type == "timeline",
+            PatientStructuredData.is_deleted == False
+        ).order_by(PatientStructuredData.created_at.desc()).first()
+
+        return structured_data
+
+    @staticmethod
     def get_patient_timeline(patient_detail: PatientStructuredData) -> Optional[Dict[str, Any]]:
         """获取患者时间轴数据"""
         if not patient_detail:
@@ -150,6 +165,22 @@ class PatientDetailHelper:
         return journey.structuredcontent if journey else None
 
     @staticmethod
+    def get_mdt_simple_report(patient_detail: PatientStructuredData) -> Optional[Dict[str, Any]]:
+        """获取MDT简报数据"""
+        if not patient_detail:
+            return None
+
+        from sqlalchemy.orm import Session
+        db = Session.object_session(patient_detail)
+        mdt_report = db.query(PatientStructuredData).filter(
+            PatientStructuredData.conversation_id == patient_detail.conversation_id,
+            PatientStructuredData.data_type == "mdt_report",
+            PatientStructuredData.is_deleted == False
+        ).first()
+
+        return mdt_report.structuredcontent if mdt_report else None
+
+    @staticmethod
     def get_patient_full_content(patient_detail: PatientStructuredData) -> Optional[str]:
         """获取患者完整内容"""
         if not patient_detail:
@@ -177,6 +208,20 @@ class PatientDetailHelper:
             ]
         except Exception as e:
             logger.error(f"获取文件数据失败: {str(e)}")
+            return None
+
+    @staticmethod
+    def get_raw_file_ids(patient_detail: PatientStructuredData) -> Optional[List[str]]:
+        """获取原始文件ID列表"""
+        if not patient_detail:
+            return None
+
+        try:
+            # 从patient关系查询文件ID
+            files = patient_detail.patient.files
+            return [f.id for f in files if not f.is_deleted]
+        except Exception as e:
+            logger.error(f"获取文件ID列表失败: {str(e)}")
             return None
 
     @staticmethod

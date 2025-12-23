@@ -1,0 +1,156 @@
+analyze_and_modify_task:
+  description: >
+    分析用户的修改需求并返回具体的修改指令，支持复杂的多处修改场景。
+    
+    【任务说明】
+    用户可能会提出涉及多个数据位置的修改需求，你需要：
+    1. 全面理解用户的修改需求
+    2. 识别所有需要修改的数据位置
+    3. 考虑数据之间的关联性和一致性
+    4. 返回完整的修改指令集，让代码来执行具体的修改操作
+    
+    【复杂修改场景示例】
+    - "把张三的姓名改为李四，同时更新MDT报告中的姓名"
+    - "删除2024年1月的门诊记录，同时删除对应的患者旅程和指标数据"
+    - "修改血压值，同时更新相关的异常状态和患者旅程描述"
+    - "添加新的检查结果，同时更新时间轴、患者旅程和MDT报告"
+    
+    【数据结构说明】
+    - patient_timeline: 包含patient_info(基本信息和病史)和timeline(详细时间轴事件)
+      - timeline中每个条目有id、title、time_period、data_blocks等字段
+      - patient_info包含basic(基本信息)和medical_history(病史)
+    - patient_journey: 包含timeline_journey(患者时间旅程)和indicator_series(核心指标趋势)
+      - timeline_journey是简化的时间旅程条目数组
+      - indicator_series是指标数据的时间序列
+    - mdt_simple_report: MDT报告的结构化内容，通常是一个数组
+    
+    【重要：精确定位方式】
+    为了精确定位JSON中的修改位置，采用两步定位法：
+    1. 基础路径定位：使用JSON路径定位到具体字段，如"patient_info.basic.name"或"timeline[0].title"
+    2. 最小上下文修改：在定位到的字段内，通过最少的前导上下文精确修改具体文本
+    
+    【最小上下文定位原则】
+    - 使用能够唯一定位目标文本的最少字符作为前导上下文
+    - 优先尝试：前导上下文 + 目标内容
+    - 如果不唯一，再加上后导上下文
+    - 如果仍不唯一，则无法安全修改
+    
+    【前导上下文修改规范】
+    当需要修改字段内的具体文本内容时，必须提供：
+    - leading_context: 目标内容前面的最小上下文文本（通常3-5个字符即可）
+    - target_content: 要修改的具体内容
+    - trailing_context: 目标内容后面的上下文文本（仅在前导上下文不唯一时使用）
+    
+    示例：要修改"患者张三于2024年1月入院治疗"中的"张三"为"李四"
+    - target_path: "timeline[0].data_blocks[0].content"  // 先通过路径定位到字段
+    - leading_context: "患者"  // 最小上下文，如果唯一就够了
+    - target_content: "张三" 
+    - new_value: "李四"
+    - trailing_context: "于2024年1月"  // 仅在"患者张三"不唯一时才需要
+    
+    【关联更新规范】
+    某些修改会触发关联字段的自动更新：
+    - 修改指标值时，自动更新is_abnormal状态和abnormal_type描述
+    - 修改患者姓名时，需要在所有相关位置同步更新
+    - 修改时间信息时，需要检查时间序列的一致性
+    
+    【条件格式规范】
+    对于特殊情况需要条件查找时，condition字段使用标准的键值对格式：
+    - 患者旅程按日期查找：{{"date": "2025-09-05"}}
+    - MDT表格按项目名称查找：{{"item_name": "白细胞"}}
+    - 指标数据按时间查找：{{"series_time": "2025-09-05"}}
+    - 文本内容查找：{{"text_contains": "特定文本片段"}}
+    
+    禁止使用描述性的条件字符串
+    
+    【用户修改请求】
+    {user_request}
+    
+    【当前患者数据】
+    {current_patient_data}
+    
+    【分析要求】
+    1. 全面分析用户需求，识别所有涉及的修改点
+    2. 考虑数据一致性，如果修改一处需要同步更新其他位置，要一并处理
+    3. 按照修改的逻辑顺序排列指令（如：先删除再添加）
+    4. 对于关联修改，要明确说明原因
+    5. 如果用户需求不明确，要做出合理的推断和补充
+    6. 优先使用基础路径定位，避免复杂的条件查找
+    7. 对于文本内容的修改，使用最小上下文确保精确且唯一定位
+    8. 考虑关联字段的自动更新，如指标异常状态等
+
+  expected_output: >
+    返回JSON格式的修改指令，支持多个修改操作：
+    {{
+      "operation_type": "single/multiple/complex",
+      "total_modifications": "修改操作的总数",
+      "modifications": [
+        {{
+          "sequence": 1,
+          "target_module": "patient_timeline/patient_journey/mdt_simple_report",
+          "target_path": "具体的JSON路径，如patient_info.basic.name或timeline[0].title",
+          "action": "set/modify_text/delete",
+          "new_value": "新的值（如果是delete则为null）",
+          "condition": {{"key": "value"}} 或 null,
+          "leading_context": "前导上下文文本（用于modify_text操作）",
+          "target_content": "要修改的具体内容（用于modify_text操作）",
+          "trailing_context": "后导上下文文本（仅在必要时使用）",
+          "description": "修改描述",
+          "reason": "为什么需要这个修改（特别是关联修改）",
+          "depends_on": "依赖的前序修改序号（如果有）"
+        }}
+      ],
+      "consistency_updates": [
+        {{
+          "description": "为保持数据一致性而进行的额外更新",
+          "affected_modules": ["涉及的模块列表"]
+        }}
+      ],
+      "reasoning": "完整的分析推理过程，包括为什么选择这些修改点"
+    }}
+    
+    【定位方式示例】
+    1. 基础路径定位（适用于结构化字段直接修改）：
+    {{
+      "target_path": "patient_info.basic.name",
+      "action": "set",
+      "new_value": "李四"
+    }}
+    
+    2. 最小上下文修改（适用于字段内文本内容的精确修改）：
+    {{
+      "target_path": "timeline[0].data_blocks[0].content",
+      "action": "modify_text",
+      "leading_context": "患者",
+      "target_content": "张三",
+      "new_value": "李四"
+    }}
+    
+    3. 指标值修改（会自动更新异常状态）：
+    {{
+      "target_path": "indicator_series[0].series[0].value",
+      "action": "set", 
+      "new_value": 150,
+      "description": "修改血压值，系统会自动更新is_abnormal和abnormal_type字段"
+    }}
+    
+    4. 删除操作（删除整个条目）：
+    {{
+      "target_path": "timeline[1]",
+      "action": "delete",
+      "description": "删除第二个时间轴事件"
+    }}
+    
+    【条件格式示例】
+    正确的condition格式（仅在必要时使用）：
+    - {{"date": "2025-09-05"}} - 按日期查找
+    - {{"item_name": "白细胞"}} - 按项目名称查找  
+    - {{"series_time": "2025-09-05"}} - 按时间序列查找
+    - {{"text_contains": "特定文本"}} - 按文本内容查找
+    - null - 无条件，直接按路径操作
+    
+    错误的condition格式（禁止使用）：
+    - "date为'2025-09-05'的患者旅程条目"
+    - "表格中项目名称为'白细胞'的行"
+
+  agent: update_analyzer 
