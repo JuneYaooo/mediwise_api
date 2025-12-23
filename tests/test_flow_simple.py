@@ -23,7 +23,7 @@ import time
 
 # 配置
 API_BASE_URL = "http://182.254.240.153:9527" #"http://localhost:9527"
-CASE_DIR = "/home/ubuntu/data/patient_case/liyunshan/"
+CASE_DIR = "/home/ubuntu/data/patient_case/xuguoqiang/"
 
 
 def get_beijing_time():
