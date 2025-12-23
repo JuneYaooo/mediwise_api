@@ -40,16 +40,21 @@
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
+| patient_id | string | 否 | 患者ID。提供时更新现有患者数据，不提供时创建新患者 |
 | patient_description | string | 否 | 患者说明文本，描述患者基本情况 |
 | consultation_purpose | string | 否 | 会诊目的，说明本次处理的目标 |
 | files | array | 否 | 文件列表 |
 | files[].file_name | string | 是 | 文件名（含扩展名） |
 | files[].file_content | string | 是 | 文件内容（Base64 编码） |
 
-**注意**: `patient_description` 和 `files` 至少需要提供一个
+**注意**:
+- `patient_description` 和 `files` 至少需要提供一个
+- 提供 `patient_id` 时，接口会更新该患者的现有数据（追加文件，合并结构化数据）
+- 不提供 `patient_id` 时，接口会创建新患者记录
 
 **请求示例**:
 
+**创建新患者**:
 ```json
 {
   "patient_description": "患者李云山的完整病例资料，包含多次检查报告和影像资料",
@@ -62,6 +67,20 @@
     {
       "file_name": "影像资料.jpg",
       "file_content": "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJ..."
+    }
+  ]
+}
+```
+
+**更新现有患者**:
+```json
+{
+  "patient_id": "patient_uuid_xxx",
+  "patient_description": "补充最新的复查报告",
+  "files": [
+    {
+      "file_name": "复查报告.pdf",
+      "file_content": "JVBERi0xLjQKJeLjz9MKMSAwIG9..."
     }
   ]
 }
@@ -87,21 +106,28 @@ data: {"status": "completed", "message": "患者数据处理完成", "progress":
 
 ```json
 {
-  "patient_id": "患者唯一ID",
-  "conversation_id": "会话ID",
-  "uploaded_files_count": 2,
-  "uploaded_file_ids": ["file_id_1", "file_id_2"],
-  "patient_timeline": {
-    "基本信息": {...},
-    "时间轴": [...]
-  },
-  "patient_journey": {
-    "诊疗历程": [...]
-  },
-  "mdt_simple_report": {
-    "MDT简报": {...}
-  },
-  "patient_full_content": "患者完整内容文本"
+  "status": "completed",
+  "message": "患者数据处理完成",  // 更新模式下为"患者数据更新完成"
+  "progress": 100,
+  "duration": 123.45,
+  "is_update": false,  // true表示更新模式，false表示创建模式
+  "result": {
+    "patient_id": "患者唯一ID",
+    "conversation_id": "会话ID",
+    "uploaded_files_count": 2,
+    "uploaded_file_ids": ["file_id_1", "file_id_2"],
+    "patient_timeline": {
+      "基本信息": {...},
+      "时间轴": [...]
+    },
+    "patient_journey": {
+      "诊疗历程": [...]
+    },
+    "mdt_simple_report": {
+      "MDT简报": {...}
+    },
+    "patient_full_content": "患者完整内容文本"
+  }
 }
 ```
 

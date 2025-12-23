@@ -33,7 +33,7 @@ def get_beijing_time():
 
 
 def load_files_from_directory(max_files=5):
-    """从服务器目录读取文件并转换为base64"""
+    """从服务器目录读取前N个文件并转换为base64"""
     print(f"\n📂 正在从目录读取文件: {CASE_DIR}")
 
     case_path = Path(CASE_DIR)
@@ -42,36 +42,46 @@ def load_files_from_directory(max_files=5):
         print(f"❌ 目录不存在: {CASE_DIR}")
         sys.exit(1)
 
-    files = []
+    # 收集所有文件
+    all_files = []
     supported_extensions = ['.pdf', '.jpg', '.jpeg', '.png']
 
-    print(f"正在读取文件并转换为 base64...")
-
-    file_count = 0
-
     for file_path in case_path.rglob('*'):
-        if file_count >= max_files:
-            break
-
         if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
-            try:
-                with open(file_path, 'rb') as f:
-                    file_content = f.read()
+            all_files.append(file_path)
 
-                files.append({
-                    'file_name': file_path.name,
-                    'file_content': base64.b64encode(file_content).decode('utf-8')
-                })
+    if not all_files:
+        print(f"❌ 目录中未找到任何支持的文件")
+        sys.exit(1)
 
-                file_size_mb = len(file_content) / (1024 * 1024)
-                print(f"  ✓ {file_path.name} ({file_size_mb:.2f} MB)")
-                file_count += 1
+    # 按文件名排序（确保顺序一致）
+    all_files.sort(key=lambda x: x.name)
 
-            except Exception as e:
-                print(f"  ✗ 无法读取 {file_path.name}: {e}")
+    # 取前N个文件
+    files_to_upload = all_files[:max_files] if len(all_files) >= max_files else all_files
+
+    print(f"📊 目录中共有 {len(all_files)} 个文件，选择前 {len(files_to_upload)} 个文件")
+    print(f"正在读取文件并转换为 base64...\n")
+
+    files = []
+    for file_path in files_to_upload:
+        try:
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+
+            files.append({
+                'file_name': file_path.name,
+                'file_content': base64.b64encode(file_content).decode('utf-8')
+            })
+
+            file_size_mb = len(file_content) / (1024 * 1024)
+            print(f"  ✓ {file_path.name} ({file_size_mb:.2f} MB)")
+
+        except Exception as e:
+            print(f"  ✗ 无法读取 {file_path.name}: {e}")
 
     if not files:
-        print(f"❌ 未找到可用文件")
+        print(f"\n❌ 未成功读取任何文件")
         sys.exit(1)
 
     print(f"\n✅ 已准备 {len(files)} 个文件用于上传\n")

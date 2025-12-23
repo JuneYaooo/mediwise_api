@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from app.routers import patient_data_processing, patient_extraction, patient_ppt
+from app.routers import patient_data_processing, patient_extraction, patient_ppt, conversation_modification
 from app.db.database import engine, Base
 
 # Create database tables
@@ -43,6 +43,12 @@ app.include_router(
     tags=["patient_ppt"]
 )
 
+app.include_router(
+    conversation_modification.router,
+    prefix="/api/conversations",
+    tags=["conversation_modification"]
+)
+
 
 @app.get("/")
 def root():
@@ -52,7 +58,8 @@ def root():
         "endpoints": {
             "patient_data_processing": "/api/patient_data",
             "patient_extraction": "/api/conversations",
-            "patient_ppt": "/api/patients/{patient_id}/generate_ppt"
+            "patient_ppt": "/api/patients/{patient_id}/generate_ppt",
+            "conversation_modification": "/api/conversations/{conversation_id}/modify_conversation_stream"
         }
     }
 
