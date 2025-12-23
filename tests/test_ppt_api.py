@@ -5,7 +5,7 @@ PPT API 测试脚本
 import requests
 import json
 
-BASE_URL = "http://localhost:9527"
+BASE_URL = "http://182.254.240.153:9527" #"http://localhost:9527"
 
 def test_get_ppt_data(patient_id):
     """测试获取 PPT 数据"""

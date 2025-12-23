@@ -310,9 +310,10 @@ async def process_patient_data_async(
     客户端可以通过任务ID轮询任务状态。
 
     请求参数:
-        - patient_description: 患者说明文本（必填）
-        - consultation_purpose: 会诊目的（必填）
-        - files: 文件列表（必填，每个文件需包含file_name、file_content(base64)）
+        - patient_description: 患者说明文本（可选）
+        - consultation_purpose: 会诊目的（可选）
+        - files: 文件列表（可选，每个文件需包含file_name、file_content(base64)）
+        - 注意：patient_description 和 files 至少需要提供一个
 
     返回:
         {
@@ -327,17 +328,11 @@ async def process_patient_data_async(
         consultation_purpose = request.get("consultation_purpose", "")
         files = request.get("files", [])
 
-        # 验证输入
-        if not patient_description or not consultation_purpose:
+        # 验证输入：至少 patient_description 或 files 有一个必须有值
+        if not patient_description and not files:
             raise HTTPException(
                 status_code=400,
-                detail="patient_description 和 consultation_purpose 是必填项",
-            )
-
-        if not files:
-            raise HTTPException(
-                status_code=400,
-                detail="files 不能为空，必须上传至少一个文件",
+                detail="patient_description 和 files 至少需要提供一个",
             )
 
         # 生成任务ID
@@ -991,9 +986,10 @@ async def process_patient_data_smart(
     - 客户端重连时：可以通过task_id查询状态
 
     请求参数:
-        - patient_description: 患者说明文本（必填）
-        - consultation_purpose: 会诊目的（必填）
-        - files: 文件列表（必填，每个文件需包含file_name、file_content(base64)）
+        - patient_description: 患者说明文本（可选）
+        - consultation_purpose: 会诊目的（可选）
+        - files: 文件列表（可选，每个文件需包含file_name、file_content(base64)）
+        - 注意：patient_description 和 files 至少需要提供一个
 
     返回:
         流式响应（Server-Sent Events格式），第一条消息包含task_id
@@ -1009,17 +1005,11 @@ async def process_patient_data_smart(
         consultation_purpose = request.get("consultation_purpose", "")
         files = request.get("files", [])
 
-        # 验证输入
-        if not patient_description or not consultation_purpose:
+        # 验证输入：至少 patient_description 或 files 有一个必须有值
+        if not patient_description and not files:
             raise HTTPException(
                 status_code=400,
-                detail="patient_description 和 consultation_purpose 是必填项",
-            )
-
-        if not files:
-            raise HTTPException(
-                status_code=400,
-                detail="files 不能为空，必须上传至少一个文件",
+                detail="patient_description 和 files 至少需要提供一个",
             )
 
         # 生成任务ID
