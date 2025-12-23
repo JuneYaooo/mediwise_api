@@ -260,6 +260,7 @@ def generate_patient_journey_image_sync(
 ) -> bool:
     """
     同步便捷函数：生成患者时间旅程图片
+    支持在已有事件循环中调用
 
     Args:
         patient_journey_data: 患者旅程数据
@@ -270,4 +271,18 @@ def generate_patient_journey_image_sync(
         是否成功生成
     """
     generator = PatientJourneyImageGenerator()
-    return asyncio.run(generator.generate_image(patient_journey_data, output_path, patient_name))
+
+    # 检查是否已经在事件循环中
+    try:
+        loop = asyncio.get_running_loop()
+        # 如果已经在事件循环中，创建新的任务并等待
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(
+                asyncio.run,
+                generator.generate_image(patient_journey_data, output_path, patient_name)
+            )
+            return future.result()
+    except RuntimeError:
+        # 没有运行中的事件循环，直接使用 asyncio.run
+        return asyncio.run(generator.generate_image(patient_journey_data, output_path, patient_name))

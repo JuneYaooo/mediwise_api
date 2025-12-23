@@ -66,11 +66,8 @@ def process_patient_data_background(
 
         overall_start_time = time.time()
 
-        # 1. 从patient_description提取患者姓名（简化处理：使用"患者"作为默认名称）
-        # TODO: 如果有更好的方式提取患者姓名，应该在这里实现
-        patient_name = "患者"  # 或从patient_description中提取
-
-        # 2. 创建患者记录
+        # 1. 创建患者记录（初始使用默认名称，后续从结构化数据中提取真实信息）
+        patient_name = "患者"  # 临时默认名称
         patient = BusPatientHelper.create_or_get_patient(
             db=db,
             name=patient_name,
@@ -78,7 +75,7 @@ def process_patient_data_background(
             status="active"
         )
 
-        # 3. 创建会话记录
+        # 2. 创建会话记录
         session_id = f"patient_{task_id}"
         conversation = BusPatientHelper.create_conversation(
             db=db,
@@ -211,6 +208,42 @@ def process_patient_data_background(
             extraction_statistics=extraction_statistics
         )
         logger.info(f"[后台任务 {task_id}] 患者数据已保存到数据库")
+
+        # 从结构化数据中提取患者姓名、出生日期，并更新 bus_patient 表
+        patient_timeline = result.get("full_structure_data", {})
+        if patient_timeline and isinstance(patient_timeline, dict):
+            basic_info = patient_timeline.get("基本信息", {})
+
+            # 提取姓名
+            extracted_name = basic_info.get("姓名") or basic_info.get("患者姓名") or basic_info.get("name")
+            if extracted_name and extracted_name != "患者":
+                patient.name = extracted_name
+                logger.info(f"[后台任务 {task_id}] 从结构化数据中提取患者姓名: {extracted_name}")
+
+            # 提取出生日期
+            birth_date_str = basic_info.get("出生日期") or basic_info.get("birth_date")
+            if birth_date_str:
+                try:
+                    from datetime import datetime
+                    # 尝试多种日期格式
+                    for fmt in ["%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日"]:
+                        try:
+                            patient.birth_date = datetime.strptime(birth_date_str, fmt)
+                            logger.info(f"[后台任务 {task_id}] 从结构化数据中提取出生日期: {birth_date_str}")
+                            break
+                        except ValueError:
+                            continue
+                except Exception as e:
+                    logger.warning(f"[后台任务 {task_id}] 解析出生日期失败: {birth_date_str}, 错误: {e}")
+
+        # 更新 raw_file_ids（用逗号分隔）
+        if uploaded_file_ids:
+            patient.raw_file_ids = ",".join(uploaded_file_ids)
+            logger.info(f"[后台任务 {task_id}] 更新 raw_file_ids: {len(uploaded_file_ids)} 个文件")
+
+        # 提交更新
+        db.commit()
+        logger.info(f"[后台任务 {task_id}] bus_patient 表已更新: 姓名={patient.name}, 出生日期={patient.birth_date}, raw_file_ids={len(uploaded_file_ids) if uploaded_file_ids else 0}个文件")
 
         # 处理成功
         overall_duration = time.time() - overall_start_time
@@ -421,8 +454,8 @@ def process_patient_data_background_from_task(task_id: str):
         conversation_id = task_data.get("conversation_id")
         if not conversation_id:
             # 如果还没有创建Conversation，现在创建
-            # 1. 从patient_description提取患者姓名
-            patient_name = "患者"
+            # 1. 创建患者记录（初始使用默认名称，后续从结构化数据中提取真实信息）
+            patient_name = "患者"  # 临时默认名称
 
             # 2. 创建患者记录
             patient = BusPatientHelper.create_or_get_patient(
@@ -568,6 +601,42 @@ def process_patient_data_background_from_task(task_id: str):
         )
         logger.info(f"[后台任务 {task_id}] 患者数据已保存到数据库")
 
+        # 从结构化数据中提取患者姓名、出生日期，并更新 bus_patient 表
+        patient_timeline = result.get("full_structure_data", {})
+        if patient_timeline and isinstance(patient_timeline, dict):
+            basic_info = patient_timeline.get("基本信息", {})
+
+            # 提取姓名
+            extracted_name = basic_info.get("姓名") or basic_info.get("患者姓名") or basic_info.get("name")
+            if extracted_name and extracted_name != "患者":
+                patient.name = extracted_name
+                logger.info(f"[后台任务 {task_id}] 从结构化数据中提取患者姓名: {extracted_name}")
+
+            # 提取出生日期
+            birth_date_str = basic_info.get("出生日期") or basic_info.get("birth_date")
+            if birth_date_str:
+                try:
+                    from datetime import datetime
+                    # 尝试多种日期格式
+                    for fmt in ["%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日"]:
+                        try:
+                            patient.birth_date = datetime.strptime(birth_date_str, fmt)
+                            logger.info(f"[后台任务 {task_id}] 从结构化数据中提取出生日期: {birth_date_str}")
+                            break
+                        except ValueError:
+                            continue
+                except Exception as e:
+                    logger.warning(f"[后台任务 {task_id}] 解析出生日期失败: {birth_date_str}, 错误: {e}")
+
+        # 更新 raw_file_ids（用逗号分隔）
+        if uploaded_file_ids:
+            patient.raw_file_ids = ",".join(uploaded_file_ids)
+            logger.info(f"[后台任务 {task_id}] 更新 raw_file_ids: {len(uploaded_file_ids)} 个文件")
+
+        # 提交更新
+        db.commit()
+        logger.info(f"[后台任务 {task_id}] bus_patient 表已更新: 姓名={patient.name}, 出生日期={patient.birth_date}, raw_file_ids={len(uploaded_file_ids) if uploaded_file_ids else 0}个文件")
+
         # 处理成功
         overall_duration = time.time() - overall_start_time
         task_status_store[task_id] = {
@@ -646,9 +715,8 @@ async def smart_stream_patient_data_processing(
 
         overall_start_time = time.time()
 
-        # 1. 从patient_description提取患者姓名（简化处理：使用"患者"作为默认名称）
-        # TODO: 如果有更好的方式提取患者姓名，应该在这里实现
-        patient_name = "患者"  # 或从patient_description中提取
+        # 1. 创建患者记录（初始使用默认名称，后续从结构化数据中提取真实信息）
+        patient_name = "患者"  # 临时默认名称
 
         # 2. 创建患者记录
         patient = BusPatientHelper.create_or_get_patient(
@@ -802,6 +870,42 @@ async def smart_stream_patient_data_processing(
             extraction_statistics=extraction_statistics
         )
         logger.info(f"[混合任务 {task_id}] 患者数据已保存到数据库")
+
+        # 从结构化数据中提取患者姓名、出生日期，并更新 bus_patient 表
+        patient_timeline = result.get("full_structure_data", {})
+        if patient_timeline and isinstance(patient_timeline, dict):
+            basic_info = patient_timeline.get("基本信息", {})
+
+            # 提取姓名
+            extracted_name = basic_info.get("姓名") or basic_info.get("患者姓名") or basic_info.get("name")
+            if extracted_name and extracted_name != "患者":
+                patient.name = extracted_name
+                logger.info(f"[混合任务 {task_id}] 从结构化数据中提取患者姓名: {extracted_name}")
+
+            # 提取出生日期
+            birth_date_str = basic_info.get("出生日期") or basic_info.get("birth_date")
+            if birth_date_str:
+                try:
+                    from datetime import datetime
+                    # 尝试多种日期格式
+                    for fmt in ["%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日"]:
+                        try:
+                            patient.birth_date = datetime.strptime(birth_date_str, fmt)
+                            logger.info(f"[混合任务 {task_id}] 从结构化数据中提取出生日期: {birth_date_str}")
+                            break
+                        except ValueError:
+                            continue
+                except Exception as e:
+                    logger.warning(f"[混合任务 {task_id}] 解析出生日期失败: {birth_date_str}, 错误: {e}")
+
+        # 更新 raw_file_ids（用逗号分隔）
+        if uploaded_file_ids:
+            patient.raw_file_ids = ",".join(uploaded_file_ids)
+            logger.info(f"[混合任务 {task_id}] 更新 raw_file_ids: {len(uploaded_file_ids)} 个文件")
+
+        # 提交更新
+        db.commit()
+        logger.info(f"[混合任务 {task_id}] bus_patient 表已更新: 姓名={patient.name}, 出生日期={patient.birth_date}, raw_file_ids={len(uploaded_file_ids) if uploaded_file_ids else 0}个文件")
 
         # 处理成功
         overall_duration = time.time() - overall_start_time
