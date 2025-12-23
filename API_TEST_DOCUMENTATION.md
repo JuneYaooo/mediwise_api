@@ -40,11 +40,13 @@
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| patient_description | string | 是 | 患者说明文本，描述患者基本情况 |
-| consultation_purpose | string | 是 | 会诊目的，说明本次处理的目标 |
-| files | array | 是 | 文件列表，至少包含一个文件 |
+| patient_description | string | 否 | 患者说明文本，描述患者基本情况 |
+| consultation_purpose | string | 否 | 会诊目的，说明本次处理的目标 |
+| files | array | 否 | 文件列表 |
 | files[].file_name | string | 是 | 文件名（含扩展名） |
 | files[].file_content | string | 是 | 文件内容（Base64 编码） |
+
+**注意**: `patient_description` 和 `files` 至少需要提供一个
 
 **请求示例**:
 
