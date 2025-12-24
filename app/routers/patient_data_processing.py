@@ -6,6 +6,8 @@ import json
 import time
 from datetime import datetime
 import uuid
+import os
+import asyncio
 
 from app.db.database import get_db
 from app.core.deps import get_current_user
@@ -25,6 +27,91 @@ router = APIRouter()
 
 # 全局字典存储对话历史（生产环境应使用Redis或数据库）
 conversation_messages_store = {}
+
+
+async def generate_modification_confirmation_stream(
+    modification_request: str,
+    result: dict,
+    task_id: str,
+    conversation_id: str
+):
+    """
+    生成患者信息修改完成的流式确认消息
+    参考 /home/ubuntu/github/mediwise/app/agents/medical_graph_stream.py 的 generate_modification_confirmation
+    """
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import HumanMessage
+
+        # 使用通用对话模型
+        model = ChatOpenAI(
+            model=os.getenv('GENERAL_CHAT_MODEL_NAME', 'Pro/deepseek-ai/DeepSeek-V3.2-Exp'),
+            api_key=os.getenv('GENERAL_CHAT_API_KEY'),
+            base_url=os.getenv('GENERAL_CHAT_BASE_URL'),
+            streaming=True,
+            timeout=600  # 10 minutes timeout for confirmation message generation
+        )
+
+        # 生成确认消息的提示词
+        prompt = f"""假设你是医疗AI助手Mediwise，刚刚完成了患者信息修改的任务。请用简洁、专业且友好的语言向用户确认操作已完成。
+
+用户的原始需求：{modification_request}
+
+请生成一个简短的确认消息，内容应该包括：
+1. 确认患者信息修改已经完成
+2. 简要说明完成了什么操作
+3. 提醒用户可以查看更新后的患者信息
+4. 询问是否还需要其他帮助
+
+语言要求：
+- 使用中文
+- 语气专业但亲切
+- 简洁明了，不要过于冗长
+- 体现医疗AI的专业性"""
+
+        messages = [HumanMessage(content=prompt)]
+
+        logger.info(f"[修改任务 {task_id}] 开始生成流式确认消息")
+
+        # 流式输出确认消息
+        confirmation_messages = []
+        async for chunk in model.astream(messages):
+            if chunk.content:
+                message_data = {
+                    'status': 'streaming_response',
+                    'stage': 'confirmation',
+                    'message': chunk.content,
+                    'is_chunk': True,
+                    'progress': 90
+                }
+                confirmation_messages.append(message_data)
+                yield message_data
+
+        # 发送流式结束标记
+        final_message = {
+            'status': 'streaming_response',
+            'stage': 'confirmation_complete',
+            'message': '',
+            'is_chunk': False,
+            'progress': 95
+        }
+        confirmation_messages.append(final_message)
+        yield final_message
+
+        logger.info(f"[修改任务 {task_id}] 流式确认消息生成完成")
+
+    except Exception as e:
+        logger.error(f"[修改任务 {task_id}] 生成流式确认消息时出错: {str(e)}")
+
+        # 发送简单的文本确认消息
+        fallback_message = {
+            'status': 'streaming_response',
+            'stage': 'confirmation',
+            'message': f"✅ 患者信息修改已完成！您可以查看更新后的患者信息。如需其他帮助，请随时告诉我。",
+            'is_chunk': False,
+            'progress': 95
+        }
+        yield fallback_message
 
 
 # ============================================================================
@@ -2178,10 +2265,15 @@ async def smart_stream_patient_modification(
         # 调用异步任务（参考 modify_patient_info 中的调用方式）
         logger.info(f"[修改任务 {task_id}] 调用 PatientInfoUpdateCrew")
 
-        # 定义一个简单的writer用于接收状态更新（不能用yield，因为不是生成器）
-        # 我们不需要实时流式传输crew内部的状态，只在完成后更新
+        # 定义一个writer用于接收状态更新并流式传输给客户端
+        # 注意：这个writer不能是async生成器，因为task_async期望一个普通的回调函数
+        # 我们将消息缓存，然后在调用完成后统一处理
+        crew_messages = []
+
         def writer_func(message):
-            # 这里只记录日志，不做流式传输
+            """接收crew的输出消息并缓存"""
+            crew_messages.append(message)
+            # 记录日志
             if message.get("type") == "status":
                 logger.info(f"[修改任务 {task_id}] PatientInfoUpdateCrew状态: {message.get('status_msg')}")
 
@@ -2195,8 +2287,8 @@ async def smart_stream_patient_modification(
             agent_session_id=conversation_id
         )
 
-        # 更新进度为80%
-        progress_msg = {'status': 'processing', 'stage': 'saving', 'message': '正在保存修改结果', 'progress': 80}
+        # 更新进度为70%
+        progress_msg = {'status': 'processing', 'stage': 'generating_response', 'message': '正在生成修改确认消息', 'progress': 70}
         yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0)
         task_status_store[task_id].update(progress_msg)
@@ -2258,6 +2350,23 @@ async def smart_stream_patient_modification(
                 extraction_statistics=extraction_statistics
             )
             logger.info(f"[修改任务 {task_id}] 患者数据已创建到数据库")
+
+        # ========== 生成流式确认消息 ==========
+        logger.info(f"[修改任务 {task_id}] 开始生成流式确认消息")
+
+        # 调用流式确认消息生成器
+        async for confirmation_msg in generate_modification_confirmation_stream(
+            modification_request=modification_request,
+            result=result,
+            task_id=task_id,
+            conversation_id=conversation_id
+        ):
+            # 流式传输确认消息
+            yield f"data: {json.dumps(confirmation_msg, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0)
+            # 更新任务状态
+            if confirmation_msg.get('progress'):
+                task_status_store[task_id].update({'progress': confirmation_msg['progress']})
 
         # 处理成功
         overall_duration = time.time() - overall_start_time
