@@ -379,6 +379,7 @@ class BusPatientHelper:
                 conversation_id=file_data.get("conversation_id"),
 
                 # 基本文件信息
+                file_uuid=file_data.get("file_uuid"),
                 file_name=file_name,
                 upload_filename=file_data.get("upload_filename"),
                 file_extension=file_data.get("file_extension"),

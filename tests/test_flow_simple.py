@@ -88,12 +88,132 @@ def load_files_from_directory(max_files=5):
     return files
 
 
-def test_scenario_2_disconnect(files):
+def test_scenario_1_file_upload_progress(files):
     """
-    场景：客户端接收几条消息后断开，然后查询任务状态（无需认证）
+    场景1：测试文件上传进度实时反馈
+    验证前端能够实时看到每个文件的接收状态
     """
     print("=" * 80)
-    print("📱 测试场景：客户端中途断开（后台继续执行）")
+    print("📥 测试场景1：文件上传进度实时反馈")
+    print("=" * 80)
+
+    headers = {
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "patient_description": "测试文件上传进度反馈功能",
+        "consultation_purpose": "验证实时进度功能",
+        "files": files
+    }
+
+    print(f"\n📤 发送请求... ({get_beijing_time()})")
+    print(f"📊 上传文件数: {len(files)}\n")
+
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/api/patient_data/process_patient_data_smart",
+            headers=headers,
+            json=payload,
+            stream=True,
+            timeout=1200
+        )
+
+        if response.status_code != 200:
+            print(f"❌ 请求失败: {response.text}")
+            return None
+
+        print(f"✅ 连接成功，开始接收流式响应...\n", flush=True)
+        print("-" * 80, flush=True)
+
+        task_id = None
+        event_count = 0
+        file_upload_events = []
+        upload_complete = False
+
+        buffer = ""
+        for chunk in response.iter_content(chunk_size=1, decode_unicode=True):
+            if chunk:
+                buffer += chunk
+
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    line = line.strip()
+
+                    if line and line.startswith('data: '):
+                        event_count += 1
+
+                        try:
+                            data = json.loads(line[6:])
+
+                            # 保存task_id
+                            if 'task_id' in data and not task_id:
+                                task_id = data['task_id']
+                                print(f"📋 任务ID: {task_id}\n", flush=True)
+
+                            stage = data.get('stage', '')
+                            message = data.get('message', '')
+                            progress = data.get('progress', 0)
+
+                            # 重点关注文件上传阶段
+                            if stage == 'file_upload':
+                                file_info = data.get('file_info', {})
+                                current = file_info.get('current', 0)
+                                total = file_info.get('total', 0)
+                                file_name = file_info.get('file_name', '')
+
+                                print(f"[{progress:3d}%] {message}", flush=True)
+                                file_upload_events.append(data)
+
+                            # 上传完成标记
+                            elif 'upload_complete' in stage or '所有文件接收完成' in message:
+                                print(f"\n{'=' * 80}", flush=True)
+                                print(f"[{progress:3d}%] ✅ {message}", flush=True)
+                                print(f"{'=' * 80}\n", flush=True)
+                                upload_complete = True
+
+                                # 收到文件上传完成消息后断开连接
+                                print(f"🔌 {get_beijing_time()} | 文件已全部接收，主动断开连接", flush=True)
+                                print(f"   💡 后台将继续处理数据...\n", flush=True)
+                                response.close()
+                                break
+
+                            # 其他重要阶段
+                            elif stage in ['received']:
+                                print(f"[{progress:3d}%] {message}", flush=True)
+
+                        except json.JSONDecodeError as e:
+                            print(f"⚠️  JSON 解析错误: {e}", flush=True)
+
+                if upload_complete:
+                    break
+
+        print("-" * 80, flush=True)
+        print(f"\n📊 文件上传进度统计:", flush=True)
+        print(f"   - 总消息数: {event_count}", flush=True)
+        print(f"   - 文件上传进度消息数: {len(file_upload_events)}", flush=True)
+        print(f"   - 预期消息数: {len(files) * 2 + 1} (每个文件2条 + 完成1条)", flush=True)
+
+        if len(file_upload_events) >= len(files):
+            print(f"   ✅ 成功接收所有文件的上传进度\n", flush=True)
+        else:
+            print(f"   ⚠️  文件上传进度消息不足\n", flush=True)
+
+        return task_id
+
+    except Exception as e:
+        print(f"❌ 异常: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def test_scenario_2_disconnect(files):
+    """
+    场景2：客户端接收几条消息后断开，然后查询任务状态（无需认证）
+    """
+    print("=" * 80)
+    print("📱 测试场景2：客户端中途断开（后台继续执行）")
     print("=" * 80)
 
     headers = {
@@ -139,23 +259,18 @@ def test_scenario_2_disconnect(files):
 
                     if line and line.startswith('data: '):
                         event_count += 1
+
+                        # 打印原始数据
+                        print(f"\n📦 [{event_count}] 原始数据:", flush=True)
+                        print(line, flush=True)
+                        print("-" * 40, flush=True)
+
                         try:
                             data = json.loads(line[6:])
 
                             # 保存task_id
                             if 'task_id' in data and not task_id:
                                 task_id = data['task_id']
-                                print(f"🆔 任务ID: {task_id}", flush=True)
-                                print(f"💡 将在接收{max_events}条消息后主动断开\n", flush=True)
-
-                            status = data.get('status', 'unknown')
-
-                            if status == 'started':
-                                print(f"🚀 [{event_count}] {get_beijing_time()} | {data.get('message', '')}", flush=True)
-                            elif status == 'processing':
-                                progress = data.get('progress', 0)
-                                message = data.get('message', '')
-                                print(f"⏳ [{event_count}] {get_beijing_time()} | 进度 {progress}% - {message}", flush=True)
 
                             # 接收到指定数量的消息后主动断开
                             if event_count >= max_events:
@@ -238,24 +353,90 @@ def test_scenario_2_disconnect(files):
 def main():
     """主测试流程"""
     print("\n" + "=" * 80)
-    print("🧪 混合智能接口测试 - 客户端断开后台继续执行")
+    print("🧪 混合智能接口测试")
     print("=" * 80)
     print(f"API 地址: {API_BASE_URL}")
     print(f"病例目录: {CASE_DIR}")
     print(f"认证方式: 暂无需认证\n")
 
     print("💡 提示：")
-    print("   - 本脚本只测试患者数据处理（支持断开重连）")
-    print("   - PPT 生成请使用: python test_ppt_api.py <patient_id> generate")
+    print("   场景1: 测试文件上传进度实时反馈")
+    print("   场景2: 测试客户端断开后台继续执行")
+    print("   PPT 生成请使用: python test_ppt_api.py <patient_id> generate")
     print()
+
+    # 询问用户选择测试场景
+    print("请选择测试场景：")
+    print("  1 - 文件上传进度测试（验证实时进度反馈）")
+    print("  2 - 断开重连测试（验证后台继续执行）")
+    print("  3 - 运行全部测试")
+
+    choice = input("\n请输入选项 (1/2/3，默认2): ").strip() or "2"
 
     # 加载文件
     files = load_files_from_directory(max_files=5)
 
-    # 运行断开测试
-    result = test_scenario_2_disconnect(files)
+    if choice == "1":
+        # 场景1：文件上传进度测试
+        print("\n" + "=" * 80)
+        print("运行场景1：文件上传进度测试")
+        print("=" * 80 + "\n")
+        task_id = test_scenario_1_file_upload_progress(files)
 
-    # patient_id 已经在测试函数中打印过了
+        if task_id:
+            # 等待并查询最终结果
+            print(f"\n⏰ 等待后台处理完成...\n", flush=True)
+            time.sleep(10)
+
+            for i in range(20):
+                status_response = requests.get(
+                    f"{API_BASE_URL}/api/patient_data/task_status/{task_id}"
+                )
+
+                if status_response.status_code == 200:
+                    status_data = status_response.json()
+                    current_status = status_data.get('status')
+                    current_progress = status_data.get('progress', 0)
+                    current_message = status_data.get('message', '')
+
+                    print(f"📊 [{i+1}] {get_beijing_time()} | 状态: {current_status} | 进度: {current_progress}% | {current_message}", flush=True)
+
+                    if current_status == 'completed':
+                        result = status_data.get('result', {})
+                        patient_id = result.get('patient_id', 'N/A')
+                        print(f"\n✅ 任务完成！患者ID: {patient_id}\n", flush=True)
+                        break
+                    elif current_status == 'error':
+                        print(f"\n❌ 任务失败\n", flush=True)
+                        break
+
+                time.sleep(5)
+
+    elif choice == "2":
+        # 场景2：断开重连测试
+        print("\n" + "=" * 80)
+        print("运行场景2：断开重连测试")
+        print("=" * 80 + "\n")
+        result = test_scenario_2_disconnect(files)
+
+    elif choice == "3":
+        # 运行全部测试
+        print("\n" + "=" * 80)
+        print("运行全部测试场景")
+        print("=" * 80 + "\n")
+
+        # 场景1
+        print("\n▶️  开始场景1...")
+        task_id_1 = test_scenario_1_file_upload_progress(files)
+        time.sleep(3)
+
+        # 场景2
+        print("\n▶️  开始场景2...")
+        result_2 = test_scenario_2_disconnect(files)
+
+    else:
+        print(f"\n❌ 无效的选项: {choice}")
+        return
 
     print("\n" + "=" * 80)
     print("✅ 测试完成")

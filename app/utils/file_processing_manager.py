@@ -24,13 +24,14 @@ class FileProcessingManager:
         self.extractor = FileContentExtractor()
         self.metadata_builder = FileMetadataBuilder()
 
-    def process_files(self, files: List[Dict], conversation_id: str) -> tuple[List[Dict], List[str], List[Dict]]:
+    def process_files(self, files: List[Dict], conversation_id: str, progress_callback=None) -> tuple[List[Dict], List[str], List[Dict]]:
         """
         处理文件上传、提取和元数据构建的完整流程
 
         Args:
             files: 原始文件列表
             conversation_id: 会话ID
+            progress_callback: 进度回调函数，接收 (current, total, message, file_info) 参数
 
         Returns:
             (formatted_files, uploaded_file_ids, extracted_file_results)
@@ -38,11 +39,23 @@ class FileProcessingManager:
         if not files:
             return [], [], []
 
-        # 第一步：上传文件到七牛云
-        formatted_files = self._upload_files(files, conversation_id)
+        total_files = len(files)
+
+        # 第一步：上传文件到七牛云（带进度回调）
+        formatted_files = self._upload_files(files, conversation_id, progress_callback, total_files)
 
         # 提取已上传文件的UUID
         uploaded_file_ids = [f.get('file_uuid') for f in formatted_files if f.get('file_uuid')]
+
+        # 通知文件接收完成
+        if progress_callback:
+            progress_callback(
+                current=total_files,
+                total=total_files,
+                message=f"✅ 所有文件接收完成（{total_files}/{total_files}），准备开始处理",
+                file_info=None,
+                stage='upload_complete'
+            )
 
         # 第二步：提取文件内容
         extracted_file_results = []
@@ -60,20 +73,37 @@ class FileProcessingManager:
 
         return formatted_files, uploaded_file_ids, extracted_file_results
 
-    def _upload_files(self, files: List[Dict], conversation_id: str) -> List[Dict]:
+    def _upload_files(self, files: List[Dict], conversation_id: str, progress_callback=None, total_files=None) -> List[Dict]:
         """
         上传文件到七牛云
 
         Args:
             files: 原始文件列表
             conversation_id: 会话ID
+            progress_callback: 进度回调函数
+            total_files: 文件总数
 
         Returns:
             格式化的文件信息列表
         """
         formatted_files = []
+        total = total_files or len(files)
 
-        for file in files:
+        for idx, file in enumerate(files, 1):
+            file_name = file.get("file_name", "未知文件")
+            file_size = file.get("file_size", 0)
+
+            # 通知开始处理当前文件
+            if progress_callback:
+                size_mb = file_size / (1024 * 1024) if file_size else 0
+                progress_callback(
+                    current=idx,
+                    total=total,
+                    message=f"📥 正在接收文件 {idx}/{total}: {file_name} ({size_mb:.2f}MB)",
+                    file_info={'file_name': file_name, 'file_size': file_size},
+                    stage='uploading'
+                )
+
             file_uuid = str(uuid.uuid4())
 
             # 处理文件上传
@@ -88,6 +118,16 @@ class FileProcessingManager:
                 fallback_info = self._create_fallback_file_info(file, file_uuid)
                 if fallback_info:
                     formatted_files.append(fallback_info)
+
+            # 通知当前文件处理完成
+            if progress_callback:
+                progress_callback(
+                    current=idx,
+                    total=total,
+                    message=f"✅ 文件 {idx}/{total} 已上传: {file_name}",
+                    file_info=file_info or fallback_info,
+                    stage='uploaded'
+                )
 
         logger.info(f"成功处理 {len(formatted_files)}/{len(files)} 个文件上传")
         return formatted_files

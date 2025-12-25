@@ -932,8 +932,8 @@ async def smart_stream_patient_data_processing(
 
     conversation = None
     try:
-        # 第一条消息：返回task_id（非常重要！客户端要保存这个ID）
-        yield f"data: {json.dumps({'task_id': task_id, 'status': 'started', 'message': '开始处理患者数据', 'progress': 0}, ensure_ascii=False)}\n\n"
+        # 第一条消息：明确告知接收成功
+        yield f"data: {json.dumps({'task_id': task_id, 'status': 'received', 'message': '✅ 数据已接收，开始处理', 'progress': 0}, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0)
 
         logger.info(f"[混合任务 {task_id}] 开始流式处理，patient_id={patient_id or '新建'}")
@@ -1011,17 +1011,47 @@ async def smart_stream_patient_data_processing(
         if files:
             logger.info(f"[混合任务 {task_id}] 开始处理 {len(files)} 个文件")
 
-            progress_msg = {'status': 'processing', 'stage': 'file_processing', 'message': f'正在处理 {len(files)} 个文件', 'progress': 10}
-            yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
-            await asyncio.sleep(0)
-            task_status_store[task_id].update(progress_msg)
-
             file_processing_start_time = time.time()
+
+            # 存储进度消息的列表
+            progress_messages = []
+
+            # 定义进度回调函数
+            def file_progress_callback(current, total, message, file_info, stage):
+                """文件上传进度回调 - 收集进度消息"""
+                # 计算进度：文件接收阶段占 5-25%
+                if stage == 'uploading':
+                    progress = 5 + int((current - 0.5) / total * 20)  # 5-25%
+                elif stage == 'uploaded':
+                    progress = 5 + int(current / total * 20)  # 5-25%
+                elif stage == 'upload_complete':
+                    progress = 25
+                else:
+                    progress = 10
+
+                progress_msg = {
+                    'status': 'processing',
+                    'stage': 'file_upload',
+                    'message': message,
+                    'progress': progress,
+                    'file_info': {
+                        'current': current,
+                        'total': total,
+                        'file_name': file_info.get('file_name') if file_info else None
+                    }
+                }
+                progress_messages.append(progress_msg)
 
             file_manager = FileProcessingManager()
             formatted_files, uploaded_file_ids, extracted_file_results = file_manager.process_files(
-                files, conversation_id
+                files, conversation_id, progress_callback=file_progress_callback
             )
+
+            # 异步发送所有收集的进度消息
+            for progress_msg in progress_messages:
+                yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0)
+                task_status_store[task_id].update(progress_msg)
 
             file_processing_duration = time.time() - file_processing_start_time
 
@@ -1568,8 +1598,8 @@ async def smart_stream_patient_followup(
     import asyncio
 
     try:
-        # 第一条消息：返回task_id
-        yield f"data: {json.dumps({'task_id': task_id, 'status': 'started', 'message': '开始处理您的追问', 'progress': 0}, ensure_ascii=False)}\n\n"
+        # 第一条消息：明确告知接收成功
+        yield f"data: {json.dumps({'task_id': task_id, 'status': 'received', 'message': '✅ 请求已接收，开始处理您的追问', 'progress': 0}, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0)
 
         logger.info(f"[对话任务 {task_id}] 开始流式处理")
@@ -2162,8 +2192,8 @@ async def smart_stream_patient_modification(
 
     conversation = None
     try:
-        # 第一条消息：返回task_id
-        yield f"data: {json.dumps({'task_id': task_id, 'status': 'started', 'message': '开始修改患者数据', 'progress': 0}, ensure_ascii=False)}\n\n"
+        # 第一条消息：明确告知接收成功
+        yield f"data: {json.dumps({'task_id': task_id, 'status': 'received', 'message': '✅ 修改请求已接收，开始处理', 'progress': 0}, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0)
 
         logger.info(f"[修改任务 {task_id}] 开始流式处理，patient_id={patient_id}")

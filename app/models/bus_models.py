@@ -124,6 +124,7 @@ class PatientFile(Base):
     conversation_id = Column(String(36), nullable=True, comment="关联的对话ID（如果通过对话上传）")
 
     # 基本文件信息
+    file_uuid = Column(String(36), nullable=True, comment="文件唯一标识UUID")
     file_name = Column(String(255), nullable=False)
     upload_filename = Column(String(255), nullable=True, comment="上传后的文件名（包含UUID和扩展名）")
     file_extension = Column(String(20), nullable=True, comment="文件扩展名（如pdf, jpg, zip）")
