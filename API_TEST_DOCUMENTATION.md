@@ -48,6 +48,7 @@ curl http://localhost:9527/
   "endpoints": {
     "patient_data_processing": "/api/patient_data/process_patient_data_smart",
     "patient_data_task_status": "/api/patient_data/task_status/{task_id}",
+    "patient_chat": "/api/patients/{patient_id}/chat",
     "patient_ppt_generate": "/api/patients/{patient_id}/generate_ppt",
     "patient_ppt_data": "/api/patients/{patient_id}/ppt_data"
   }
@@ -90,15 +91,16 @@ curl http://localhost:9527/health
 
 ## 1. 患者数据处理接口
 
-### 1.1 混合智能处理
+### 1.1 患者首次数据处理
 
 **接口**: `POST /api/patient_data/process_patient_data_smart`
 
 **功能说明**:
-- 处理患者病历文件，提取结构化数据（患者时间轴、诊疗历程等）
+- 创建新患者并处理其病历文件
+- 提取结构化数据（患者时间轴、诊疗历程、MDT报告等）
 - 支持流式响应（Server-Sent Events），实时返回处理进度
 - 支持客户端断开后后台继续执行
-- 生成 `patient_id` 和 `conversation_id`，用于后续 PPT 生成
+- 生成 `patient_id` 和 `conversation_id`，用于后续操作
 
 **请求方式**: `POST`
 
@@ -108,7 +110,6 @@ curl http://localhost:9527/health
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| patient_id | string | 否 | 患者ID。提供时更新现有患者数据，不提供时创建新患者 |
 | patient_description | string | 否 | 患者说明文本，描述患者基本情况 |
 | consultation_purpose | string | 否 | 会诊目的，说明本次处理的目标 |
 | files | array | 否 | 文件列表 |
@@ -117,12 +118,11 @@ curl http://localhost:9527/health
 
 **注意**:
 - `patient_description` 和 `files` 至少需要提供一个
-- 提供 `patient_id` 时，接口会更新该患者的现有数据（追加文件，合并结构化数据）
-- 不提供 `patient_id` 时，接口会创建新患者记录
+- 此接口仅用于创建新患者
+- 如需更新现有患者数据，请使用 `POST /api/patients/{patient_id}/chat` 接口
 
 **请求示例**:
 
-**创建新患者**:
 ```json
 {
   "patient_description": "患者李云山的完整病例资料，包含多次检查报告和影像资料",
@@ -135,20 +135,6 @@ curl http://localhost:9527/health
     {
       "file_name": "影像资料.jpg",
       "file_content": "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJ..."
-    }
-  ]
-}
-```
-
-**更新现有患者**:
-```json
-{
-  "patient_id": "patient_uuid_xxx",
-  "patient_description": "补充最新的复查报告",
-  "files": [
-    {
-      "file_name": "复查报告.pdf",
-      "file_content": "JVBERi0xLjQKJeLjz9MKMSAwIG9..."
     }
   ]
 }
@@ -171,112 +157,6 @@ data: {"status": "processing", "stage": "patient_data_structuring", "message": "
 
 data: {"status": "completed", "message": "患者数据处理完成", "progress": 100, "duration": 123.45, "is_update": false, "result": {...}}
 ```
-
-**更新模式的流式响应**（提供了 patient_id）:
-
-更新模式下，在数据处理完成后，会额外生成一个**AI对话式确认消息**，模拟医疗助手与用户的友好交互。
-
-```
-data: {"task_id": "uuid-xxx-xxx", "status": "received", "message": "✅ 保存成功，系统会在后台进行自动解析并添加到患者列表中，预计10~20分钟，您可以先关闭对话框，耐心等待。", "progress": 0}
-
-data: {"status": "processing", "stage": "patient_data_structuring", "message": "正在进行患者数据更新处理", "progress": 30}
-
-# ========== AI对话式确认消息开始（逐字流式输出） ==========
-data: {"status": "streaming_response", "stage": "confirmation", "message": "✅", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": " 患者", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "信息", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "修改", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "已经", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "完成", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "！", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "我已", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "成功", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "为您", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "补充", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "了", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": " 2", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": " 个", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "文件", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "，", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "并更新", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "了", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "患者", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "的", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "时间", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "轴", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "数据", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "。", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "您可以", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "查看", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "更新", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "后的", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "患者", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "信息", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "。", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "还有", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "其他", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "需要", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "帮助", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "的吗", "is_chunk": true, "progress": 90}
-
-data: {"status": "streaming_response", "stage": "confirmation", "message": "？", "is_chunk": true, "progress": 90}
-
-# ========== AI确认消息结束标记 ==========
-data: {"status": "streaming_response", "stage": "confirmation_complete", "message": "", "is_chunk": false, "progress": 95}
-
-# ========== 最终完成消息 ==========
-data: {"status": "completed", "message": "患者数据更新完成", "progress": 100, "duration": 98.32, "is_update": true, "result": {...}}
-```
-
-**AI确认消息字段说明**：
-- `status`: 固定为 `"streaming_response"`，表示这是流式AI响应
-- `stage`:
-  - `"confirmation"`: AI确认消息的内容块
-  - `"confirmation_complete"`: AI确认消息结束标记
-- `message`:
-  - 当 `is_chunk: true` 时，包含AI生成的文本片段（逐字或逐词）
-  - 当 `is_chunk: false` 时，为空字符串（结束标记）
-- `is_chunk`:
-  - `true`: 表示这是消息的一部分，需要累积拼接
-  - `false`: 表示消息结束
-- `progress`: 固定为90-95之间，表示即将完成
-
-
 
 **完成时的 result 字段**:
 
@@ -469,9 +349,89 @@ GET /api/patient_data/task_status/uuid-xxx-xxx
 
 ---
 
-## 2. 患者 PPT 生成接口
+## 2. 患者对话更新接口
 
-### 2.1 生成患者 PPT
+### 2.1 对话式患者信息更新
+
+**接口**: `POST /api/patients/{patient_id}/chat`
+
+**功能说明**:
+- 支持对话式交互更新患者信息
+- 支持文本消息和文件上传
+- 自动提取结构化数据并更新患者记录
+- 流式返回处理进度
+
+**请求方式**: `POST`
+
+**Content-Type**: `application/json`
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| patient_id | string | 是 | 患者ID（从首次处理接口返回） |
+
+**请求参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| message | string | 否 | 用户消息文本 |
+| files | array | 否 | 文件列表 |
+| files[].file_name | string | 是 | 文件名（含扩展名） |
+| files[].file_content | string | 是 | 文件内容（Base64 编码） |
+
+**注意**:
+- `message` 和 `files` 至少需要提供一个
+
+**请求示例**:
+
+```json
+{
+  "message": "补充最新的复查CT报告",
+  "files": [
+    {
+      "file_name": "复查CT.pdf",
+      "file_content": "JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PC9UeXBlL0NhdGFsb..."
+    }
+  ]
+}
+```
+
+**响应格式**: `text/event-stream` (Server-Sent Events)
+
+**流式响应示例**:
+
+```
+data: {"status": "processing", "stage": "message_saved", "message": "消息已保存", "progress": 5}
+
+data: {"status": "processing", "stage": "file_processing", "message": "正在处理 1 个文件", "progress": 10}
+
+data: {"status": "processing", "stage": "file_processed", "message": "文件处理完成，共 1 个", "progress": 30}
+
+data: {"status": "processing", "stage": "data_updating", "message": "正在更新患者数据", "progress": 40}
+
+data: {"status": "processing", "stage": "data_saved", "message": "数据已保存", "progress": 95}
+
+data: {"status": "completed", "message": "✅ 患者信息已更新成功！", "progress": 100, "duration": 45.67, "data": {"patient_id": "xxx", "conversation_id": "xxx", "files_count": 1}}
+```
+
+**HTTP 状态码**:
+- `200`: 成功建立流式连接
+- `400`: 请求参数错误
+- `404`: 患者不存在
+- `500`: 服务器内部错误
+
+**使用说明**:
+1. 此接口用于更新现有患者的数据
+2. 每次调用会创建一个新的conversation记录
+3. 自动合并现有数据和新数据
+4. 支持纯文本对话、纯文件上传、或两者结合
+
+---
+
+## 3. 患者 PPT 生成接口
+
+### 3.1 生成患者 PPT
 
 **接口**: `POST /api/patients/{patient_id}/generate_ppt`
 
@@ -544,4 +504,291 @@ POST /api/patients/patient_uuid_xxx/generate_ppt
   - `qiniu_url`: 本地生成 + 七牛云上传的链接
   - `local_path`: 本地文件路径
 - **患者信息**：响应中包含患者基本信息（patient_info），便于前端展示
+
+---
+
+## 4. 数据更新策略说明
+
+### 4.1 通过chat接口更新患者数据
+
+当使用 `POST /api/patients/{patient_id}/chat` 接口时，系统会自动更新患者的结构化数据。
+
+#### 数据覆盖策略
+
+**会被完全覆盖的数据**（存储在 `bus_patient_structured_data` 表）：
+
+| 数据类型 | data_type | 字段 | 更新方式 |
+|---------|-----------|------|---------|
+| 患者时间轴 | `timeline` | `structuredcontent` | **完全覆盖**为AI重新生成的最新结构化数据 |
+| 诊疗历程 | `journey` | `structuredcontent` | **完全覆盖**为AI重新生成的数据 |
+| MDT简报 | `mdt_report` | `structuredcontent` | **完全覆盖**为AI重新生成的数据 |
+| 患者完整内容 | - | `text_content` | **覆盖**为最新的合并文本内容 |
+
+**会追加合并的数据**：
+
+| 数据表 | 字段 | 更新方式 |
+|--------|------|---------|
+| `bus_patient_files` | 文件记录 | **追加**：新文件添加到表中，旧文件保留 |
+| `bus_patient` | `raw_file_ids` | **合并去重**：新旧文件ID合并后去重 |
+
+**会更新的基本信息**（存储在 `bus_patient` 表）：
+
+| 字段 | 更新条件 |
+|------|---------|
+| `name` | 如果从新数据中提取到更准确的姓名（非"患者"默认值） |
+| `gender` | 如果从新数据中提取到性别信息 |
+| `birth_date` | 如果从新数据中提取到出生日期或年龄 |
+
+#### 更新流程详解
+
+```
+1. 检测到 patient_id → 进入更新模式
+   ↓
+2. 获取现有患者的所有结构化数据 (patient_timeline, patient_journey 等)
+   ↓
+3. 处理新上传的文件 → 文件追加到 bus_patient_files
+   ↓
+4. AI 基于 [现有数据 + 新数据] 重新生成完整的结构化内容
+   ↓
+5. 覆盖更新 bus_patient_structured_data 表中的对应记录
+   ↓
+6. 更新 bus_patient 表的基本信息（如果提取到更准确的信息）
+   ↓
+7. 生成 AI 对话式确认消息（可选）
+```
+
+#### 重要注意事项
+
+⚠️ **数据覆盖风险**：
+- 更新操作会**完全覆盖** `bus_patient_structured_data` 表中对应 `conversation_id` 的结构化数据
+- AI会基于旧数据和新数据**重新生成**完整的时间轴、诊疗历程等
+- 虽然AI会尝试合并旧数据，但理论上可能丢失部分细节
+
+✅ **数据保护措施**：
+- 每次更新都会创建新的 `conversation_id` 记录本次操作
+- 可以通过 `conversation_id` 追溯历史数据变更
+- `bus_patient_structured_data` 表支持 `version` 字段进行版本控制
+- 文件永远不会被删除，只会追加
+
+💡 **最佳实践**：
+- **增量更新**：建议每次只补充新的检查报告或文件，不要重复上传旧数据
+- **数据验证**：更新后通过 `GET /api/patients/{patient_id}/ppt_data` 检查数据完整性
+- **重要操作前备份**：如果担心数据丢失，可以先调用 `ppt_data` 接口备份现有数据
+
+#### 示例场景
+
+**场景1：补充新的检查报告**
+```json
+{
+  "patient_id": "patient_abc123",
+  "patient_description": "补充2025-01-20的复查CT报告",
+  "files": [{"file_name": "复查CT.pdf", "file_content": "..."}]
+}
+```
+- ✅ 新文件追加到文件列表
+- ✅ AI会在现有时间轴基础上添加新的检查事件
+- ✅ 旧的时间轴事件理论上会保留（但取决于AI生成）
+
+**场景2：修正患者基本信息**
+```json
+{
+  "patient_id": "patient_abc123",
+  "patient_description": "患者姓名应为'张三'，年龄65岁，男性"
+}
+```
+- ✅ `bus_patient` 表的 `name`、`gender` 会更新
+- ✅ AI会基于新信息重新生成结构化数据
+
+**场景3：大量补充历史病历**
+```json
+{
+  "patient_id": "patient_abc123",
+  "patient_description": "补充患者2020-2024年的完整病历",
+  "files": [多个历史文件]
+}
+```
+- ⚠️ 所有结构化数据会被重新生成
+- ⚠️ 建议先备份现有数据
+- ✅ 文件会全部保留
+
+---
+
+## 5. 数据库表结构说明
+
+### 5.1 核心数据表
+
+#### bus_patient（患者基本信息表）
+```sql
+-- 主要字段
+patient_id VARCHAR(36) PRIMARY KEY  -- 患者唯一标识
+name VARCHAR(255)                    -- 患者姓名
+gender VARCHAR(10)                   -- 性别
+birth_date TIMESTAMP                 -- 出生日期
+raw_file_ids TEXT                    -- 文件ID列表（逗号分隔）
+status VARCHAR(20)                   -- 状态
+created_at TIMESTAMP
+updated_at TIMESTAMP
+is_deleted BOOLEAN
+```
+
+#### bus_patient_structured_data（结构化数据表）
+```sql
+-- 主要字段
+id VARCHAR(36) PRIMARY KEY
+patient_id VARCHAR(36)               -- 关联患者
+conversation_id VARCHAR(36)          -- 关联会话（追溯数据来源）
+data_type VARCHAR(20)                -- 数据类型：timeline/journey/mdt_report
+structuredcontent JSON               -- 结构化内容（JSON格式）
+text_content TEXT                    -- 完整文本内容
+version INTEGER                      -- 版本号
+parent_version_id VARCHAR(36)        -- 父版本ID
+created_by VARCHAR(36)
+created_at TIMESTAMP
+updated_at TIMESTAMP
+is_deleted BOOLEAN
+```
+
+**关键点**：
+- 同一个 `patient_id` 可以有多个 `conversation_id` 的记录（历史版本）
+- 每个 `conversation_id` 下有3条记录（timeline、journey、mdt_report）
+- 更新时会覆盖最新 `conversation_id` 对应的记录
+
+#### bus_patient_files（文件记录表）
+```sql
+-- 主要字段
+id VARCHAR(36) PRIMARY KEY           -- 文件UUID
+patient_id VARCHAR(36)               -- 关联患者
+conversation_id VARCHAR(36)          -- 关联会话（追溯文件来源）
+file_name VARCHAR(255)               -- 原始文件名
+file_path VARCHAR(500)               -- 文件路径
+file_url VARCHAR(500)                -- 文件访问URL
+file_type VARCHAR(50)                -- 文件类型（pdf/image等）
+file_size BIGINT                     -- 文件大小
+source_type VARCHAR(30)              -- 来源类型（uploaded/extracted等）
+parent_pdf_uuid VARCHAR(36)          -- 父PDF的UUID（如果是提取的图片）
+created_at TIMESTAMP
+is_deleted BOOLEAN
+```
+
+**关键点**：
+- 文件只会追加，不会删除（除非手动标记 `is_deleted=true`）
+- 支持文件溯源（通过 `parent_pdf_uuid` 追踪提取来源）
+
+#### bus_patient_conversations（会话记录表）
+```sql
+-- 主要字段
+id VARCHAR(36) PRIMARY KEY           -- 会话ID
+patient_id VARCHAR(36)               -- 关联患者
+user_id VARCHAR(36)                  -- 操作用户
+title VARCHAR(500)                   -- 会话标题
+session_id VARCHAR(100)              -- 会话标识
+conversation_type VARCHAR(20)        -- 类型：extraction/update等
+created_at TIMESTAMP
+is_deleted BOOLEAN
+```
+
+**关键点**：
+- 每次调用 `process_patient_data_smart` 都会创建新的 `conversation_id`
+- 通过 `conversation_id` 可以追溯每次数据处理的历史
+
+---
+
+## 6. API 使用最佳实践
+
+### 6.1 完整工作流程
+
+**首次创建患者**：
+```bash
+# 步骤1: 上传患者数据
+curl -X POST http://localhost:9527/api/patient_data/process_patient_data_smart \
+  -H "Content-Type: application/json" \
+  -d '{
+    "patient_description": "患者李云山的完整病例资料",
+    "files": [...]
+  }'
+
+# 步骤2: 获取 patient_id
+# 从流式响应中提取: {"result": {"patient_id": "xxx"}}
+
+# 步骤3: 生成 PPT
+curl -X POST http://localhost:9527/api/patients/{patient_id}/generate_ppt
+```
+
+**更新患者数据**：
+```bash
+# 步骤1: 使用chat接口更新数据
+curl -X POST http://localhost:9527/api/patients/{patient_id}/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "补充最新检查报告",
+    "files": [...]
+  }'
+
+# 步骤2: 验证更新结果
+curl http://localhost:9527/api/patients/{patient_id}/ppt_data
+
+# 步骤3: 重新生成 PPT
+curl -X POST http://localhost:9527/api/patients/{patient_id}/generate_ppt
+```
+
+### 6.2 错误处理建议
+
+**超时处理**：
+```javascript
+// 使用断线续传
+const response = await fetch('/api/patient_data/process_patient_data_smart', {
+  method: 'POST',
+  body: JSON.stringify(data),
+  signal: AbortSignal.timeout(10000)  // 10秒后主动断开
+});
+
+// 从第一条消息提取 task_id
+const firstLine = await reader.read();
+const taskId = JSON.parse(firstLine.value).task_id;
+
+// 定期轮询状态
+const pollStatus = setInterval(async () => {
+  const status = await fetch(`/api/patient_data/task_status/${taskId}`);
+  const result = await status.json();
+
+  if (result.status === 'completed') {
+    clearInterval(pollStatus);
+    handleSuccess(result.result);
+  } else if (result.status === 'error') {
+    clearInterval(pollStatus);
+    handleError(result.error);
+  }
+}, 3000);  // 每3秒查询一次
+```
+
+**数据验证**：
+```javascript
+// 更新后验证数据完整性
+async function validatePatientData(patientId) {
+  const data = await fetch(`/api/patients/${patientId}/ppt_data`);
+  const json = await data.json();
+
+  // 检查关键字段
+  if (!json.data.patient_timeline) {
+    throw new Error('患者时间轴数据缺失');
+  }
+
+  if (!json.data.patient_timeline.patient_info) {
+    throw new Error('患者基本信息缺失');
+  }
+
+  console.log('✅ 数据验证通过');
+  return json.data;
+}
+```
+
+---
+
+## 7. 联系与支持
+
+如有问题或建议，请联系开发团队。
+
+**API版本**: 1.0.0
+**最后更新**: 2025-01-25
+**文档维护**: MediWise API Team
 

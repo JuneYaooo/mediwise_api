@@ -144,8 +144,9 @@ async def get_task_status(
 
 def process_patient_data_background_from_task(task_id: str):
     """
-    从任务状态恢复并在后台执行
+    从任务状态恢复并在后台执行（首次创建患者）
     当客户端断开后，这个函数会被调用来继续执行任务
+    仅支持创建新患者，不支持更新现有患者
     """
     from src.crews.patient_data_crew.patient_data_crew import PatientDataCrew
     from app.utils.file_processing_manager import FileProcessingManager
@@ -187,62 +188,32 @@ def process_patient_data_background_from_task(task_id: str):
 
         overall_start_time = task_data.get("start_time", time.time())
 
-        # 判断是创建新患者还是更新现有患者
-        is_update_mode = bool(patient_id)
         patient = None
-        existing_patient_data = None
         patient_timeline_str = ""
 
         # 获取或创建conversation_id
         conversation_id = task_data.get("conversation_id")
         if not conversation_id:
-            # 如果还没有创建Conversation，现在创建
-            if is_update_mode:
-                # 更新模式：验证并获取现有患者
-                from app.models.bus_models import Patient
-                patient = db.query(Patient).filter(
-                    Patient.patient_id == patient_id,
-                    Patient.is_deleted == False
-                ).first()
-
-                if not patient:
-                    task_status_store[task_id] = {
-                        "status": "error",
-                        "message": f"患者不存在: {patient_id}",
-                        "error": "patient_not_found",
-                        "duration": time.time() - overall_start_time
-                    }
-                    logger.error(f"[后台任务 {task_id}] 患者不存在: {patient_id}")
-                    return
-
-                logger.info(f"[后台任务 {task_id}] 更新模式：患者 {patient_id} ({patient.name})")
-
-                # 获取现有患者数据
-                existing_patient_data = BusPatientHelper.get_patient_all_data_for_ppt(db, patient_id)
-                patient_timeline_str = json.dumps(existing_patient_data.get("patient_timeline", {}), ensure_ascii=False)
-
-            else:
-                # 创建模式：创建新患者记录
-                patient_name = "患者"  # 临时默认名称
-                patient = BusPatientHelper.create_or_get_patient(
-                    db=db,
-                    name=patient_name,
-                    user_id=user_id,
-                    status="active"
-                )
-                patient_timeline_str = ""
-                logger.info(f"[后台任务 {task_id}] 创建模式：新患者 {patient.patient_id}")
+            # 创建新患者记录
+            patient_name = "患者"  # 临时默认名称
+            patient = BusPatientHelper.create_or_get_patient(
+                db=db,
+                name=patient_name,
+                user_id=user_id,
+                status="active"
+            )
+            patient_timeline_str = ""
+            logger.info(f"[后台任务 {task_id}] 创建新患者 {patient.patient_id}")
 
             # 创建会话记录
             session_id = f"patient_{task_id}"
-            title_desc = patient_description[:50] if patient_description else "数据更新"
-            operation_type = '更新' if is_update_mode else '创建'
+            title_desc = patient_description[:50] if patient_description else "首次数据处理"
             title_suffix = '...' if len(title_desc) >= 50 else ''
             conversation = BusPatientHelper.create_conversation(
                 db=db,
                 patient_id=patient.patient_id,
                 user_id=user_id,
-                title=f"{operation_type} - {title_desc}{title_suffix}",
+                title=f"创建 - {title_desc}{title_suffix}",
                 session_id=session_id,
                 conversation_type="extraction"
             )
@@ -258,12 +229,6 @@ def process_patient_data_background_from_task(task_id: str):
             # 获取patient对象
             from app.models.bus_models import Patient
             patient = db.query(Patient).filter_by(patient_id=conversation.patient_id).first()
-
-            # 获取现有数据（如果是更新模式）
-            if is_update_mode:
-                existing_patient_data = BusPatientHelper.get_patient_all_data_for_ppt(db, patient.patient_id)
-                patient_timeline_str = json.dumps(existing_patient_data.get("patient_timeline", {}), ensure_ascii=False)
-
             logger.info(f"[后台任务 {task_id}] 使用现有会话记录: {conversation_id}")
 
         # ========== 文件处理 ==========
@@ -314,19 +279,13 @@ def process_patient_data_background_from_task(task_id: str):
 """
 
         # ========== 患者数据结构化处理 ==========
-        process_type = '更新' if is_update_mode else '结构化'
         task_status_store[task_id].update({
             "progress": 30,
-            "message": f"正在进行患者数据{process_type}处理"
+            "message": "正在进行患者数据结构化处理"
         })
 
         patient_crew = PatientDataCrew()
         patient_info = user_text if user_text else ""
-
-        # 准备现有患者数据（更新模式下）
-        existing_full_content = None
-        if is_update_mode and existing_patient_data:
-            existing_full_content = existing_patient_data.get("patient_full_content", "")
 
         result = None
         for progress_data in patient_crew.get_structured_patient_data_stream(
@@ -335,7 +294,7 @@ def process_patient_data_background_from_task(task_id: str):
             messages=[],
             files=files_to_pass,
             agent_session_id=conversation_id,
-            existing_patient_data=existing_full_content
+            existing_patient_data=None  # 首次创建，无现有数据
         ):
             if progress_data.get("type") == "progress":
                 # 更新任务进度
@@ -368,64 +327,22 @@ def process_patient_data_background_from_task(task_id: str):
             logger.error(f"[后台任务 {task_id}] 处理失败: {result['error']}")
             return
 
-        # 保存或更新 PatientDetail
+        # 保存 PatientDetail
         from app.models.patient_detail_helpers import PatientDetailHelper
 
-        if is_update_mode:
-            # 更新模式：查找现有的 PatientDetail 并更新
-            patient_detail = PatientDetailHelper.get_latest_patient_detail_by_patient_id(db, patient.patient_id)
-
-            if patient_detail:
-                # 合并文件数据
-                existing_raw_files = PatientDetailHelper.get_raw_files_data(patient_detail) or []
-                merged_raw_files = existing_raw_files + raw_files_data if raw_files_data else existing_raw_files
-
-                existing_file_ids = PatientDetailHelper.get_raw_file_ids(patient_detail) or []
-                merged_file_ids = list(set(existing_file_ids + uploaded_file_ids)) if uploaded_file_ids else existing_file_ids
-
-                PatientDetailHelper.update_patient_detail(
-                    db=db,
-                    patient_detail=patient_detail,
-                    raw_text_data=user_text if user_text else None,
-                    raw_files_data=merged_raw_files if raw_files_data else None,
-                    raw_file_ids=merged_file_ids if uploaded_file_ids else None,
-                    patient_timeline=result.get("full_structure_data"),
-                    patient_journey=result.get("patient_journey"),
-                    mdt_simple_report=result.get("mdt_simple_report"),
-                    patient_full_content=result.get("patient_content"),
-                    extraction_statistics=extraction_statistics
-                )
-                logger.info(f"[后台任务 {task_id}] 患者数据已更新到数据库")
-            else:
-                # 如果没有找到，创建新的
-                PatientDetailHelper.create_patient_detail(
-                    db=db,
-                    conversation_id=conversation_id,
-                    raw_text_data=user_text,
-                    raw_files_data=raw_files_data,
-                    raw_file_ids=uploaded_file_ids,
-                    patient_timeline=result.get("full_structure_data"),
-                    patient_journey=result.get("patient_journey"),
-                    mdt_simple_report=result.get("mdt_simple_report"),
-                    patient_full_content=result.get("patient_content"),
-                    extraction_statistics=extraction_statistics
-                )
-                logger.info(f"[后台任务 {task_id}] 患者数据已创建到数据库（首次）")
-        else:
-            # 创建模式：创建新的 PatientDetail
-            PatientDetailHelper.create_patient_detail(
-                db=db,
-                conversation_id=conversation_id,
-                raw_text_data=user_text,
-                raw_files_data=raw_files_data,
-                raw_file_ids=uploaded_file_ids,
-                patient_timeline=result.get("full_structure_data"),
-                patient_journey=result.get("patient_journey"),
-                mdt_simple_report=result.get("mdt_simple_report"),
-                patient_full_content=result.get("patient_content"),
-                extraction_statistics=extraction_statistics
-            )
-            logger.info(f"[后台任务 {task_id}] 患者数据已保存到数据库")
+        PatientDetailHelper.create_patient_detail(
+            db=db,
+            conversation_id=conversation_id,
+            raw_text_data=user_text,
+            raw_files_data=raw_files_data,
+            raw_file_ids=uploaded_file_ids,
+            patient_timeline=result.get("full_structure_data"),
+            patient_journey=result.get("patient_journey"),
+            mdt_simple_report=result.get("mdt_simple_report"),
+            patient_full_content=result.get("patient_content"),
+            extraction_statistics=extraction_statistics
+        )
+        logger.info(f"[后台任务 {task_id}] 患者数据已保存到数据库")
 
         # 从结构化数据中提取患者姓名、年龄、性别等信息，并更新 bus_patient 表
         # 注意：根据 process_patient_data_task 的返回格式，患者基本信息在 patient_info.basic 中
@@ -527,8 +444,8 @@ async def smart_stream_patient_data_processing(
     db: Session
 ):
     """
-    混合智能处理：既流式返回，又能在断开后继续执行
-    支持创建新患者或更新现有患者数据
+    首次患者数据处理：流式返回处理进度，支持断开后继续执行
+    仅用于创建新患者，不支持更新现有患者
     """
     from src.crews.patient_data_crew.patient_data_crew import PatientDataCrew
     from app.utils.file_processing_manager import FileProcessingManager
@@ -547,56 +464,26 @@ async def smart_stream_patient_data_processing(
 
         overall_start_time = time.time()
 
-        # 判断是创建新患者还是更新现有患者
-        is_update_mode = bool(patient_id)
-        patient = None
-        existing_patient_data = None
-
-        if is_update_mode:
-            # 更新模式：验证并获取现有患者
-            from app.models.bus_models import Patient
-            patient = db.query(Patient).filter(
-                Patient.patient_id == patient_id,
-                Patient.is_deleted == False
-            ).first()
-
-            if not patient:
-                error_msg = f"患者不存在: {patient_id}"
-                logger.error(f"[混合任务 {task_id}] {error_msg}")
-                error_response = {'status': 'error', 'message': error_msg, 'error': 'patient_not_found'}
-                yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
-                await asyncio.sleep(0)
-                task_status_store[task_id].update(error_response)
-                return
-
-            logger.info(f"[混合任务 {task_id}] 更新模式：患者 {patient_id} ({patient.name})")
-
-            # 获取现有患者数据
-            existing_patient_data = BusPatientHelper.get_patient_all_data_for_ppt(db, patient_id)
-            patient_timeline_str = json.dumps(existing_patient_data.get("patient_timeline", {}), ensure_ascii=False)
-
-        else:
-            # 创建模式：创建新患者记录
-            patient_name = "患者"  # 临时默认名称
-            patient = BusPatientHelper.create_or_get_patient(
-                db=db,
-                name=patient_name,
-                user_id=user_id,
-                status="active"
-            )
-            patient_timeline_str = ""
-            logger.info(f"[混合任务 {task_id}] 创建模式：新患者 {patient.patient_id}")
+        # 创建新患者记录
+        patient_name = "患者"  # 临时默认名称，后续从结构化数据中提取真实姓名
+        patient = BusPatientHelper.create_or_get_patient(
+            db=db,
+            name=patient_name,
+            user_id=user_id,
+            status="active"
+        )
+        patient_timeline_str = ""
+        logger.info(f"[首次处理任务 {task_id}] 创建新患者 {patient.patient_id}")
 
         # 创建会话记录
         session_id = f"patient_{task_id}"
-        title_desc = patient_description[:50] if patient_description else "数据更新"
-        operation_type = '更新' if is_update_mode else '创建'
+        title_desc = patient_description[:50] if patient_description else "首次数据处理"
         title_suffix = '...' if len(title_desc) >= 50 else ''
         conversation = BusPatientHelper.create_conversation(
             db=db,
             patient_id=patient.patient_id,
             user_id=user_id,
-            title=f"{operation_type} - {title_desc}{title_suffix}",
+            title=f"创建 - {title_desc}{title_suffix}",
             session_id=session_id,
             conversation_type="extraction"
         )
@@ -740,19 +627,13 @@ async def smart_stream_patient_data_processing(
 """
 
         # ========== 患者数据结构化处理 ==========
-        process_type = '更新' if is_update_mode else '结构化'
-        progress_msg = {'status': 'processing', 'stage': 'patient_data_structuring', 'message': f'正在进行患者数据{process_type}处理', 'progress': 30}
+        progress_msg = {'status': 'processing', 'stage': 'patient_data_structuring', 'message': '正在进行患者数据结构化处理', 'progress': 30}
         yield f"data: {json.dumps(progress_msg)}\n\n"
         await asyncio.sleep(0)
         task_status_store[task_id].update(progress_msg)
 
         patient_crew = PatientDataCrew()
         patient_info = user_text if user_text else ""
-
-        # 准备现有患者数据（更新模式下）
-        existing_full_content = None
-        if is_update_mode and existing_patient_data:
-            existing_full_content = existing_patient_data.get("patient_full_content", "")
 
         result = None
         for progress_data in patient_crew.get_structured_patient_data_stream(
@@ -761,7 +642,7 @@ async def smart_stream_patient_data_processing(
             messages=[],
             files=files_to_pass,
             agent_session_id=conversation_id,
-            existing_patient_data=existing_full_content
+            existing_patient_data=None  # 首次创建，无现有数据
         ):
             if progress_data.get("type") == "progress":
                 # 同时做两件事：
@@ -802,65 +683,22 @@ async def smart_stream_patient_data_processing(
             task_status_store[task_id].update(error_response)
             return
 
-        # 保存或更新 PatientDetail
+        # 保存 PatientDetail
         from app.models.patient_detail_helpers import PatientDetailHelper
 
-        if is_update_mode:
-            # 更新模式：查找现有的 PatientDetail 并更新
-            # 获取该患者最新的 conversation 的 patient_detail
-            patient_detail = PatientDetailHelper.get_latest_patient_detail_by_patient_id(db, patient_id)
-
-            if patient_detail:
-                # 合并文件数据
-                existing_raw_files = PatientDetailHelper.get_raw_files_data(patient_detail) or []
-                merged_raw_files = existing_raw_files + raw_files_data if raw_files_data else existing_raw_files
-
-                existing_file_ids = PatientDetailHelper.get_raw_file_ids(patient_detail) or []
-                merged_file_ids = list(set(existing_file_ids + uploaded_file_ids)) if uploaded_file_ids else existing_file_ids
-
-                PatientDetailHelper.update_patient_detail(
-                    db=db,
-                    patient_detail=patient_detail,
-                    raw_text_data=user_text if user_text else None,
-                    raw_files_data=merged_raw_files if raw_files_data else None,
-                    raw_file_ids=merged_file_ids if uploaded_file_ids else None,
-                    patient_timeline=result.get("full_structure_data"),
-                    patient_journey=result.get("patient_journey"),
-                    mdt_simple_report=result.get("mdt_simple_report"),
-                    patient_full_content=result.get("patient_content"),
-                    extraction_statistics=extraction_statistics
-                )
-                logger.info(f"[混合任务 {task_id}] 患者数据已更新到数据库")
-            else:
-                # 如果没有找到，创建新的
-                PatientDetailHelper.create_patient_detail(
-                    db=db,
-                    conversation_id=conversation_id,
-                    raw_text_data=user_text,
-                    raw_files_data=raw_files_data,
-                    raw_file_ids=uploaded_file_ids,
-                    patient_timeline=result.get("full_structure_data"),
-                    patient_journey=result.get("patient_journey"),
-                    mdt_simple_report=result.get("mdt_simple_report"),
-                    patient_full_content=result.get("patient_content"),
-                    extraction_statistics=extraction_statistics
-                )
-                logger.info(f"[混合任务 {task_id}] 患者数据已创建到数据库（首次）")
-        else:
-            # 创建模式：创建新的 PatientDetail
-            PatientDetailHelper.create_patient_detail(
-                db=db,
-                conversation_id=conversation_id,
-                raw_text_data=user_text,
-                raw_files_data=raw_files_data,
-                raw_file_ids=uploaded_file_ids,
-                patient_timeline=result.get("full_structure_data"),
-                patient_journey=result.get("patient_journey"),
-                mdt_simple_report=result.get("mdt_simple_report"),
-                patient_full_content=result.get("patient_content"),
-                extraction_statistics=extraction_statistics
-            )
-            logger.info(f"[混合任务 {task_id}] 患者数据已保存到数据库")
+        PatientDetailHelper.create_patient_detail(
+            db=db,
+            conversation_id=conversation_id,
+            raw_text_data=user_text,
+            raw_files_data=raw_files_data,
+            raw_file_ids=uploaded_file_ids,
+            patient_timeline=result.get("full_structure_data"),
+            patient_journey=result.get("patient_journey"),
+            mdt_simple_report=result.get("mdt_simple_report"),
+            patient_full_content=result.get("patient_content"),
+            extraction_statistics=extraction_statistics
+        )
+        logger.info(f"[首次处理任务 {task_id}] 患者数据已保存到数据库")
 
         # 从结构化数据中提取患者姓名、出生日期，并更新 bus_patient 表
         patient_timeline = result.get("full_structure_data", {})
@@ -899,38 +737,17 @@ async def smart_stream_patient_data_processing(
 
         # 提交更新
         db.commit()
-        logger.info(f"[混合任务 {task_id}] bus_patient 表已更新: 姓名={patient.name}, 出生日期={patient.birth_date}, raw_file_ids={len(uploaded_file_ids) if uploaded_file_ids else 0}个文件")
-
-        # ========== 生成流式AI确认消息（如果是更新模式） ==========
-        if is_update_mode:
-            logger.info(f"[混合任务 {task_id}] 开始生成流式AI确认消息")
-
-            # 构建修改请求描述
-            modification_desc = f"补充了 {len(uploaded_file_ids)} 个文件"
-            if patient_description:
-                modification_desc = f"{patient_description}（{modification_desc}）"
-
-            # 调用流式确认消息生成器
-            async for confirmation_msg in generate_modification_confirmation_stream(
-                modification_request=modification_desc,
-                result=result,
-                task_id=task_id,
-                conversation_id=conversation_id
-            ):
-                # 流式传输确认消息
-                yield f"data: {json.dumps(confirmation_msg, ensure_ascii=False)}\n\n"
-                await asyncio.sleep(0)
+        logger.info(f"[首次处理任务 {task_id}] bus_patient 表已更新: 姓名={patient.name}, 出生日期={patient.birth_date}, raw_file_ids={len(uploaded_file_ids) if uploaded_file_ids else 0}个文件")
 
         # 处理成功
         overall_duration = time.time() - overall_start_time
 
-        completion_message = '更新' if is_update_mode else '处理'
         final_result = {
             "status": "completed",
-            "message": f"患者数据{completion_message}完成",
+            "message": "患者数据处理完成",
             "progress": 100,
             "duration": overall_duration,
-            "is_update": is_update_mode,
+            "is_update": False,  # 首次创建
             "result": {
                 "patient_id": patient.patient_id,
                 "conversation_id": conversation_id,
@@ -991,17 +808,16 @@ async def process_patient_data_smart(
     db: Session = Depends(get_db),
 ) -> Any:
     """
-    混合智能接口：既能实时流式返回，又能在客户端断开后继续执行
+    患者首次数据处理接口：用于创建新患者并处理其病历数据
 
-    这个接口结合了流式接口和异步接口的优点：
-    - 客户端在线时：实时返回处理进度（类似流式接口）
-    - 客户端断开时：自动转为后台执行（类似异步接口）
-    - 客户端重连时：可以通过task_id查询状态
+    功能：
+    - 创建新患者记录
+    - 处理上传的文件和文本
+    - 提取结构化患者数据（时间轴、诊疗历程、MDT报告等）
+    - 支持流式进度返回
+    - 支持客户端断开后后台继续执行
 
     请求参数:
-        - patient_id: 患者ID（可选）
-          - 提供有效的patient_id：更新现有患者数据
-          - 不提供或为空：创建新患者数据
         - patient_description: 患者说明文本（可选）
         - consultation_purpose: 会诊目的（可选）
         - files: 文件列表（可选，每个文件需包含file_name、file_content(base64)）
@@ -1010,14 +826,12 @@ async def process_patient_data_smart(
     返回:
         流式响应（Server-Sent Events格式），第一条消息包含task_id
 
-    客户端使用示例:
-        1. 发起请求并接收流式响应
-        2. 从第一条消息中提取task_id并保存
-        3. 如果断开连接，可以通过 GET /task_status/{task_id} 查询状态
+    注意：
+        - 此接口仅用于首次创建患者
+        - 如需更新现有患者数据，请使用 POST /api/patients/{patient_id}/chat 接口
     """
     try:
         # 获取用户输入
-        patient_id = request.get("patient_id", "").strip()
         patient_description = request.get("patient_description", "")
         consultation_purpose = request.get("consultation_purpose", "")
         files = request.get("files", [])
@@ -1042,7 +856,7 @@ async def process_patient_data_smart(
             "message": "任务已创建",
             "start_time": time.time(),
             "user_id": user_id,
-            "patient_id": patient_id,
+            "patient_id": "",  # 首次创建，无patient_id
             "patient_description": patient_description,
             "consultation_purpose": consultation_purpose,
             "files": files
@@ -1051,13 +865,13 @@ async def process_patient_data_smart(
         # 初始化任务锁
         task_locks[task_id] = False
 
-        logger.info(f"用户 {user_id} 创建混合任务 {task_id}，patient_id={patient_id or '新建'}，包含 {len(files)} 个文件")
+        logger.info(f"用户 {user_id} 创建首次处理任务 {task_id}，包含 {len(files)} 个文件")
 
         # 返回流式响应
         response = StreamingResponse(
             smart_stream_patient_data_processing(
                 task_id=task_id,
-                patient_id=patient_id,
+                patient_id="",  # 首次创建，传空字符串
                 patient_description=patient_description,
                 consultation_purpose=consultation_purpose,
                 files=files,
@@ -1077,10 +891,10 @@ async def process_patient_data_smart(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"创建混合任务时出错: {str(e)}")
+        logger.error(f"创建首次处理任务时出错: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(
             status_code=500,
-            detail=f"创建混合任务失败: {str(e)}"
+            detail=f"创建首次处理任务失败: {str(e)}"
         )

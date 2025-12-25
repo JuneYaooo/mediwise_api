@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-患者数据更新测试脚本
+患者数据更新测试脚本（使用chat接口）
 
-测试场景：更新现有患者数据
+测试场景：通过对话接口更新现有患者数据
 - 需要先通过 test_flow_simple.py 创建患者，获取 patient_id
 - 将 patient_id 填入下方的 PATIENT_ID 变量
 - 然后运行本脚本补充新的文件和描述
@@ -10,6 +10,11 @@
 使用说明：
 1. 修改下方的 PATIENT_ID 为实际的患者ID
 2. python test_patient_update.py
+
+接口说明：
+- 使用新的 POST /api/patients/{patient_id}/chat 接口
+- 支持对话式交互更新患者信息
+- 自动合并现有数据和新数据
 """
 
 import requests
@@ -103,27 +108,25 @@ def load_last_n_files(max_files=3):
 
 
 def update_patient(patient_id, files):
-    """更新现有患者数据"""
+    """通过chat接口更新现有患者数据"""
     print(f"\n{'='*80}")
-    print(f"🔄 更新患者数据")
+    print(f"🔄 通过对话接口更新患者数据")
     print(f"{'='*80}\n")
 
     payload = {
-        "patient_id": patient_id,
-        "patient_description": "补充最新复查报告和影像资料",
-        "consultation_purpose": "跟踪治疗效果，调整治疗方案",
+        "message": "补充最新复查报告和影像资料，用于跟踪治疗效果，调整治疗方案",
         "files": files
     }
 
-    print(f"📤 发送请求到: {API_BASE_URL}/api/patient_data/process_patient_data_smart")
+    print(f"📤 发送请求到: {API_BASE_URL}/api/patients/{patient_id}/chat")
     print(f"🆔 患者ID: {patient_id}")
-    print(f"📊 补充描述: {payload['patient_description']}")
+    print(f"📊 消息内容: {payload['message']}")
     print(f"📁 文件数量: {len(files)}")
     print(f"⏰ 时间: {get_beijing_time()}")
 
     try:
         response = requests.post(
-            f"{API_BASE_URL}/api/patient_data/process_patient_data_smart",
+            f"{API_BASE_URL}/api/patients/{patient_id}/chat",
             json=payload,
             stream=True,
             timeout=600
@@ -137,9 +140,7 @@ def update_patient(patient_id, files):
         print(f"\n✅ 连接成功，开始接收流式数据...\n")
         print(f"{'='*80}")
 
-        task_id = None
         update_success = False
-        ai_response_started = False  # 标记是否已开始AI回复
 
         for line in response.iter_lines():
             if line:
@@ -154,54 +155,25 @@ def update_patient(patient_id, files):
                     try:
                         data = json.loads(data_str)
 
-                        # 保存task_id
-                        if 'task_id' in data and not task_id:
-                            task_id = data['task_id']
-                            print(f"📌 任务ID: {task_id}\n")
-
                         # 显示进度
-                        if data.get('status') in ['started', 'processing']:
+                        if data.get('status') == 'processing':
                             progress = data.get('progress', 0)
                             message = data.get('message', '')
                             stage = data.get('stage', '')
                             stage_info = f' ({stage})' if stage else ''
                             print(f"[{progress:3d}%] {message}{stage_info}")
 
-                        # 显示流式AI回复
-                        elif data.get('status') == 'streaming_response':
-                            chunk_content = data.get('message', '')
-                            is_chunk = data.get('is_chunk', False)
-                            stage = data.get('stage', '')
-
-                            if stage == 'confirmation' and chunk_content:
-                                # 第一次输出时显示标题
-                                if not ai_response_started:
-                                    print(f"\n{'='*80}")
-                                    print(f"🤖 AI确认消息：")
-                                    print(f"{'='*80}")
-                                    ai_response_started = True
-
-                                # 实时打印AI回复（不换行）
-                                print(chunk_content, end='', flush=True)
-                            elif stage == 'confirmation_complete':
-                                # 回复结束，换行
-                                if ai_response_started:
-                                    print()  # 换行
-                                    print(f"{'='*80}\n")
-
                         # 完成
                         elif data.get('status') == 'completed':
-                            is_update = data.get('is_update', False)
-                            result = data.get('result', {})
+                            result_data = data.get('data', {})
 
                             print(f"\n{'='*80}")
                             print(f"✅ 患者数据更新成功!")
                             print(f"{'='*80}")
-                            print(f"  患者ID: {result.get('patient_id')}")
-                            print(f"  会话ID: {result.get('conversation_id')}")
-                            print(f"  新增文件: {result.get('uploaded_files_count')} 个")
-                            print(f"  文件IDs: {', '.join(result.get('uploaded_file_ids', []))}")
-                            print(f"  更新模式: {'是' if is_update else '否'}")
+                            print(f"  患者ID: {result_data.get('patient_id')}")
+                            print(f"  会话ID: {result_data.get('conversation_id')}")
+                            print(f"  新增文件: {result_data.get('files_count', 0)} 个")
+                            print(f"  消息: {data.get('message', '')}")
                             print(f"  耗时: {data.get('duration', 0):.2f} 秒")
                             print(f"{'='*80}\n")
 
@@ -213,7 +185,6 @@ def update_patient(patient_id, files):
                             print(f"❌ 处理失败")
                             print(f"{'='*80}")
                             print(f"  错误信息: {data.get('message')}")
-                            print(f"  错误详情: {data.get('error')}")
                             print(f"{'='*80}\n")
                             return False
 

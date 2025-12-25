@@ -121,14 +121,14 @@ class FileContentExtractor:
 
         # 判断是否包含医学影像（图片文件从提取结果获取，其他文件默认False）
         has_medical_image = False
-        # 🚨 优先使用extraction_result中的file_uuid（如果有）
+        # 🚨 优先使用原始的file_uuid（保持一致性）
         extracted_file_uuid = None
         if isinstance(extraction_result, dict):
             has_medical_image = extraction_result.get('has_medical_image', False)
-            extracted_file_uuid = extraction_result.get('file_uuid')  # 获取提取结果中的UUID
+            extracted_file_uuid = extraction_result.get('file_uuid')  # 获取提取结果中的UUID（仅作为备用）
 
-        # 使用提取结果中的UUID，如果没有则使用之前的UUID
-        final_file_uuid = extracted_file_uuid if extracted_file_uuid else file_uuid
+        # 🔧 修复：优先使用原始UUID而不是提取器生成的UUID，确保与数据库一致
+        final_file_uuid = file_uuid if file_uuid else extracted_file_uuid
 
         final_result = {
             "file_uuid": final_file_uuid,

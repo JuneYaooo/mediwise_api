@@ -154,8 +154,8 @@ class ExtractContentFromPathTool(BaseTool):
                     'file_name': filename,
                     'file_content': f"系统隐藏文件: {filename} (已跳过处理)",
                     'extraction_success': False,
-                    'extraction_error': '系统隐藏文件，已跳过处理',
-                    'file_uuid': str(uuid.uuid4())  # 🚨 添加UUID
+                    'extraction_error': '系统隐藏文件，已跳过处理'
+                    # 注意：不生成UUID，由上层统一管理
                 }
 
         try:
@@ -193,12 +193,8 @@ class ExtractContentFromPathTool(BaseTool):
             else:
                 raise ValueError(f"Invalid path or unsupported file type: {path}")
 
-            # 🚨 为结果统一添加file_uuid（如果还没有的话）
+            # 🚨 标记提取状态（不生成UUID，UUID由上层file_processing_manager统一管理）
             if isinstance(result, dict):
-                # 为字典结果添加UUID
-                if 'file_uuid' not in result:
-                    result['file_uuid'] = str(uuid.uuid4())
-
                 # 标记提取成功（如果result是字典且没有error字段）
                 if 'extraction_success' not in result:
                     # 判断是否提取成功：有file_content且内容不为空
@@ -206,20 +202,23 @@ class ExtractContentFromPathTool(BaseTool):
                     result['extraction_success'] = has_content
                     if not has_content:
                         result['extraction_error'] = '提取内容为空'
+
+                # 注意：不在这里生成file_uuid，由上层统一管理
             elif isinstance(result, list):
-                # 对于返回列表的情况（如zip文件、PDF with images），为每个元素添加UUID
+                # 对于返回列表的情况（如zip文件、PDF with images），标记提取状态
                 for item in result:
                     if isinstance(item, dict):
-                        # 为列表中的每个字典添加UUID（如果还没有）
-                        if 'file_uuid' not in item:
-                            item['file_uuid'] = str(uuid.uuid4())
-
                         # 标记提取成功
                         if 'extraction_success' not in item:
                             has_content = item.get('file_content') and len(str(item.get('file_content', '')).strip()) > 0
                             item['extraction_success'] = has_content
                             if not has_content:
                                 item['extraction_error'] = '提取内容为空'
+
+                        # 注意：这里保留UUID生成，因为zip/PDF中的子文件需要新的UUID
+                        # 但是主文件的UUID应该保留原始值
+                        if 'file_uuid' not in item:
+                            item['file_uuid'] = str(uuid.uuid4())
 
             return result
         except Exception as e:
@@ -230,8 +229,8 @@ class ExtractContentFromPathTool(BaseTool):
                 'file_name': filename,
                 'file_content': f"文件提取失败: {str(e)}",
                 'extraction_success': False,
-                'extraction_error': f"{type(e).__name__}: {str(e)}",
-                'file_uuid': str(uuid.uuid4())  # 🚨 添加UUID
+                'extraction_error': f"{type(e).__name__}: {str(e)}"
+                # 注意：不生成UUID，由上层统一管理
             }
 
     def detect_image_format(self, path):
