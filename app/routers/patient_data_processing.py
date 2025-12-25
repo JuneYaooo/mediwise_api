@@ -933,7 +933,7 @@ async def smart_stream_patient_data_processing(
     conversation = None
     try:
         # 第一条消息：明确告知接收成功
-        yield f"data: {json.dumps({'task_id': task_id, 'status': 'received', 'message': f'✅ 已接收请求（包含 {len(files)} 个文件），开始初始化', 'progress': 0}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'task_id': task_id, 'status': 'received', 'message': '✅ 保存成功，系统会在后台进行自动解析并添加到患者列表中，预计10~20分钟，您可以先关闭对话框，耐心等待。', 'progress': 0}, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0)
 
         logger.info(f"[混合任务 {task_id}] 开始流式处理，patient_id={patient_id or '新建'}")
