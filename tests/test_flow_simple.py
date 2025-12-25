@@ -90,11 +90,11 @@ def load_files_from_directory(max_files=5):
 
 def test_scenario_1_file_upload_progress(files):
     """
-    场景1：测试文件上传进度实时反馈
-    验证前端能够实时看到每个文件的接收状态
+    场景1：测试文件上传到云存储的进度实时反馈
+    验证前端能够实时看到每个文件上传到云存储的状态
     """
     print("=" * 80)
-    print("📥 测试场景1：文件上传进度实时反馈")
+    print("☁️ 测试场景1：文件上传到云存储进度实时反馈")
     print("=" * 80)
 
     headers = {
@@ -154,6 +154,7 @@ def test_scenario_1_file_upload_progress(files):
                             stage = data.get('stage', '')
                             message = data.get('message', '')
                             progress = data.get('progress', 0)
+                            timestamp = get_beijing_time()
 
                             # 重点关注文件上传阶段
                             if stage == 'file_upload':
@@ -162,25 +163,25 @@ def test_scenario_1_file_upload_progress(files):
                                 total = file_info.get('total', 0)
                                 file_name = file_info.get('file_name', '')
 
-                                print(f"[{progress:3d}%] {message}", flush=True)
+                                print(f"[{progress:3d}%] {timestamp} | {message}", flush=True)
                                 file_upload_events.append(data)
 
                             # 上传完成标记
-                            elif 'upload_complete' in stage or '所有文件接收完成' in message:
+                            elif 'upload_complete' in stage or '所有文件已上传到云存储' in message:
                                 print(f"\n{'=' * 80}", flush=True)
-                                print(f"[{progress:3d}%] ✅ {message}", flush=True)
+                                print(f"[{progress:3d}%] {timestamp} | ✅ {message}", flush=True)
                                 print(f"{'=' * 80}\n", flush=True)
                                 upload_complete = True
 
                                 # 收到文件上传完成消息后断开连接
-                                print(f"🔌 {get_beijing_time()} | 文件已全部接收，主动断开连接", flush=True)
-                                print(f"   💡 后台将继续处理数据...\n", flush=True)
+                                print(f"🔌 {timestamp} | 文件已全部上传到云存储，主动断开连接", flush=True)
+                                print(f"   💡 后台将继续提取和处理数据...\n", flush=True)
                                 response.close()
                                 break
 
                             # 其他重要阶段
                             elif stage in ['received']:
-                                print(f"[{progress:3d}%] {message}", flush=True)
+                                print(f"[{progress:3d}%] {timestamp} | {message}", flush=True)
 
                         except json.JSONDecodeError as e:
                             print(f"⚠️  JSON 解析错误: {e}", flush=True)
@@ -189,15 +190,15 @@ def test_scenario_1_file_upload_progress(files):
                     break
 
         print("-" * 80, flush=True)
-        print(f"\n📊 文件上传进度统计:", flush=True)
+        print(f"\n📊 文件上传到云存储进度统计:", flush=True)
         print(f"   - 总消息数: {event_count}", flush=True)
         print(f"   - 文件上传进度消息数: {len(file_upload_events)}", flush=True)
         print(f"   - 预期消息数: {len(files) * 2 + 1} (每个文件2条 + 完成1条)", flush=True)
 
         if len(file_upload_events) >= len(files):
-            print(f"   ✅ 成功接收所有文件的上传进度\n", flush=True)
+            print(f"   ✅ 成功接收所有文件的上传到云存储进度\n", flush=True)
         else:
-            print(f"   ⚠️  文件上传进度消息不足\n", flush=True)
+            print(f"   ⚠️  文件上传到云存储进度消息不足\n", flush=True)
 
         return task_id
 
@@ -259,9 +260,10 @@ def test_scenario_2_disconnect(files):
 
                     if line and line.startswith('data: '):
                         event_count += 1
+                        timestamp = get_beijing_time()
 
-                        # 打印原始数据
-                        print(f"\n📦 [{event_count}] 原始数据:", flush=True)
+                        # 打印原始数据（带时间戳）
+                        print(f"\n📦 [{event_count}] {timestamp} | 原始数据:", flush=True)
                         print(line, flush=True)
                         print("-" * 40, flush=True)
 
@@ -274,13 +276,13 @@ def test_scenario_2_disconnect(files):
 
                             # 接收到指定数量的消息后主动断开
                             if event_count >= max_events:
-                                print(f"\n🔌 [{event_count}] {get_beijing_time()} | 主动断开连接（模拟用户关闭浏览器）", flush=True)
+                                print(f"\n🔌 [{event_count}] {timestamp} | 主动断开连接（模拟用户关闭浏览器）", flush=True)
                                 print(f"   💡 后台任务应该继续执行...\n", flush=True)
                                 response.close()
                                 break
 
                         except json.JSONDecodeError as e:
-                            print(f"⚠️  JSON 解析错误: {e}", flush=True)
+                            print(f"⚠️  {timestamp} | JSON 解析错误: {e}", flush=True)
 
                 if event_count >= max_events:
                     break
@@ -360,14 +362,14 @@ def main():
     print(f"认证方式: 暂无需认证\n")
 
     print("💡 提示：")
-    print("   场景1: 测试文件上传进度实时反馈")
+    print("   场景1: 测试文件上传到云存储的进度实时反馈")
     print("   场景2: 测试客户端断开后台继续执行")
     print("   PPT 生成请使用: python test_ppt_api.py <patient_id> generate")
     print()
 
     # 询问用户选择测试场景
     print("请选择测试场景：")
-    print("  1 - 文件上传进度测试（验证实时进度反馈）")
+    print("  1 - 文件上传到云存储进度测试（验证实时进度反馈）")
     print("  2 - 断开重连测试（验证后台继续执行）")
     print("  3 - 运行全部测试")
 
@@ -377,9 +379,9 @@ def main():
     files = load_files_from_directory(max_files=5)
 
     if choice == "1":
-        # 场景1：文件上传进度测试
+        # 场景1：文件上传到云存储进度测试
         print("\n" + "=" * 80)
-        print("运行场景1：文件上传进度测试")
+        print("运行场景1：文件上传到云存储进度测试")
         print("=" * 80 + "\n")
         task_id = test_scenario_1_file_upload_progress(files)
 

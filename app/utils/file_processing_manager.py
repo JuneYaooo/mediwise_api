@@ -47,12 +47,12 @@ class FileProcessingManager:
         # 提取已上传文件的UUID
         uploaded_file_ids = [f.get('file_uuid') for f in formatted_files if f.get('file_uuid')]
 
-        # 通知文件接收完成
+        # 通知文件上传完成
         if progress_callback:
             progress_callback(
                 current=total_files,
                 total=total_files,
-                message=f"✅ 所有文件接收完成（{total_files}/{total_files}），准备开始处理",
+                message=f"✅ 所有文件已上传到云存储（{total_files}/{total_files}），开始提取内容",
                 file_info=None,
                 stage='upload_complete'
             )
@@ -99,7 +99,7 @@ class FileProcessingManager:
                 progress_callback(
                     current=idx,
                     total=total,
-                    message=f"📥 正在接收文件 {idx}/{total}: {file_name} ({size_mb:.2f}MB)",
+                    message=f"☁️ 正在上传文件 {idx}/{total}: {file_name} ({size_mb:.2f}MB)",
                     file_info={'file_name': file_name, 'file_size': file_size},
                     stage='uploading'
                 )
@@ -124,7 +124,7 @@ class FileProcessingManager:
                 progress_callback(
                     current=idx,
                     total=total,
-                    message=f"✅ 文件 {idx}/{total} 已上传: {file_name}",
+                    message=f"✅ 文件 {idx}/{total} 已上传到云存储: {file_name}",
                     file_info=file_info or fallback_info,
                     stage='uploaded'
                 )

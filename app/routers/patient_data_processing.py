@@ -933,7 +933,7 @@ async def smart_stream_patient_data_processing(
     conversation = None
     try:
         # 第一条消息：明确告知接收成功
-        yield f"data: {json.dumps({'task_id': task_id, 'status': 'received', 'message': '✅ 数据已接收，开始处理', 'progress': 0}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'task_id': task_id, 'status': 'received', 'message': f'✅ 已接收请求（包含 {len(files)} 个文件），开始初始化', 'progress': 0}, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0)
 
         logger.info(f"[混合任务 {task_id}] 开始流式处理，patient_id={patient_id or '新建'}")
@@ -1013,12 +1013,13 @@ async def smart_stream_patient_data_processing(
 
             file_processing_start_time = time.time()
 
-            # 存储进度消息的列表
-            progress_messages = []
+            # 创建一个队列来实时传递进度消息
+            import queue
+            progress_queue = queue.Queue()
 
-            # 定义进度回调函数
+            # 定义进度回调函数（在文件处理线程中调用）
             def file_progress_callback(current, total, message, file_info, stage):
-                """文件上传进度回调 - 收集进度消息"""
+                """文件上传进度回调 - 实时发送进度消息"""
                 # 计算进度：文件接收阶段占 5-25%
                 if stage == 'uploading':
                     progress = 5 + int((current - 0.5) / total * 20)  # 5-25%
@@ -1040,18 +1041,64 @@ async def smart_stream_patient_data_processing(
                         'file_name': file_info.get('file_name') if file_info else None
                     }
                 }
-                progress_messages.append(progress_msg)
+                # 放入队列，供异步发送
+                progress_queue.put(progress_msg)
 
-            file_manager = FileProcessingManager()
-            formatted_files, uploaded_file_ids, extracted_file_results = file_manager.process_files(
-                files, conversation_id, progress_callback=file_progress_callback
-            )
+            # 在单独的线程中处理文件
+            import threading
+            result_container = {'files': None, 'ids': None, 'results': None, 'error': None}
 
-            # 异步发送所有收集的进度消息
-            for progress_msg in progress_messages:
-                yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+            def process_files_thread():
+                try:
+                    file_manager = FileProcessingManager()
+                    formatted, ids, results = file_manager.process_files(
+                        files, conversation_id, progress_callback=file_progress_callback
+                    )
+                    result_container['files'] = formatted
+                    result_container['ids'] = ids
+                    result_container['results'] = results
+                except Exception as e:
+                    result_container['error'] = str(e)
+                finally:
+                    # 放入结束标记
+                    progress_queue.put(None)
+
+            # 启动文件处理线程
+            thread = threading.Thread(target=process_files_thread)
+            thread.start()
+
+            # 实时从队列中读取并发送进度消息
+            while True:
+                try:
+                    progress_msg = progress_queue.get(timeout=0.1)
+                    if progress_msg is None:  # 结束标记
+                        break
+
+                    # 实时发送进度消息
+                    yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0)
+                    task_status_store[task_id].update(progress_msg)
+
+                except queue.Empty:
+                    # 队列为空，继续等待
+                    await asyncio.sleep(0.1)
+                    continue
+
+            # 等待线程完成
+            thread.join()
+
+            # 检查是否有错误
+            if result_container['error']:
+                error_msg = {'status': 'error', 'message': f"文件处理失败: {result_container['error']}", 'error': result_container['error']}
+                yield f"data: {json.dumps(error_msg, ensure_ascii=False)}\n\n"
                 await asyncio.sleep(0)
-                task_status_store[task_id].update(progress_msg)
+                task_status_store[task_id].update(error_msg)
+                return
+
+            # 获取结果
+            formatted_files = result_container['files']
+            uploaded_file_ids = result_container['ids']
+            extracted_file_results = result_container['results']
 
             file_processing_duration = time.time() - file_processing_start_time
 
