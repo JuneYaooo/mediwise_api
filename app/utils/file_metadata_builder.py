@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 from app.config.file_constants import (
     IMAGE_EXTENSIONS, DOCUMENT_EXTENSIONS, TEXT_EXTENSIONS
 )
-from app.utils.timezone_utils import get_beijing_now_naive
+from app.utils.datetime_utils import get_beijing_now_naive
 from src.utils.logger import BeijingLogger
 
 logger = BeijingLogger().get_logger()
