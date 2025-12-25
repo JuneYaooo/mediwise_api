@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-混合智能接口测试脚本
+患者数据上传测试脚本
 
-测试场景：客户端中途断开（后台继续执行）
+测试场景：首次患者数据上传的完整流程
 - 客户端发起请求，接收几条进度消息
 - 主动断开连接（模拟用户关闭浏览器）
 - 后台任务继续执行
@@ -323,17 +323,6 @@ def test_scenario_2_disconnect(files):
                     print(f"   - 处理文件数: {result.get('uploaded_files_count', 0)}")
                     print(f"   📊 后台任务成功完成，即使客户端断开了！\n")
 
-                    # 打印醒目的 patient_id，方便复制
-                    print("=" * 80)
-                    print("🆔 患者ID（用于生成PPT）:")
-                    print("-" * 80)
-                    print(f"   {patient_id}")
-                    print("-" * 80)
-                    print("💡 使用以下命令生成PPT:")
-                    print(f"   python test_ppt_api.py {patient_id} generate")
-                    print("=" * 80)
-                    print()
-
                     return {'patient_id': patient_id, 'conversation_id': conversation_id}
 
                 elif current_status == 'error':
@@ -355,7 +344,7 @@ def test_scenario_2_disconnect(files):
 def main():
     """主测试流程"""
     print("\n" + "=" * 80)
-    print("🧪 混合智能接口测试")
+    print("🧪 患者数据上传测试")
     print("=" * 80)
     print(f"API 地址: {API_BASE_URL}")
     print(f"病例目录: {CASE_DIR}")
@@ -364,7 +353,6 @@ def main():
     print("💡 提示：")
     print("   场景1: 测试文件上传到云存储的进度实时反馈")
     print("   场景2: 测试客户端断开后台继续执行")
-    print("   PPT 生成请使用: python test_ppt_api.py <patient_id> generate")
     print()
 
     # 询问用户选择测试场景
