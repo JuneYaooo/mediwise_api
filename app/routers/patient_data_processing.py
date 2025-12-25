@@ -1294,6 +1294,26 @@ async def smart_stream_patient_data_processing(
         db.commit()
         logger.info(f"[混合任务 {task_id}] bus_patient 表已更新: 姓名={patient.name}, 出生日期={patient.birth_date}, raw_file_ids={len(uploaded_file_ids) if uploaded_file_ids else 0}个文件")
 
+        # ========== 生成流式AI确认消息（如果是更新模式） ==========
+        if is_update_mode:
+            logger.info(f"[混合任务 {task_id}] 开始生成流式AI确认消息")
+
+            # 构建修改请求描述
+            modification_desc = f"补充了 {len(uploaded_file_ids)} 个文件"
+            if patient_description:
+                modification_desc = f"{patient_description}（{modification_desc}）"
+
+            # 调用流式确认消息生成器
+            async for confirmation_msg in generate_modification_confirmation_stream(
+                modification_request=modification_desc,
+                result=result,
+                task_id=task_id,
+                conversation_id=conversation_id
+            ):
+                # 流式传输确认消息
+                yield f"data: {json.dumps(confirmation_msg, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0)
+
         # 处理成功
         overall_duration = time.time() - overall_start_time
 

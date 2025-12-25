@@ -29,6 +29,9 @@ PATIENT_ID = "685f1678-8260-41fa-8b7c-660c299bf44b"  # 👈 修改这里
 
 # 文件配置
 MAX_FILES = 3  # 读取后3个文件
+
+# 调试配置
+DEBUG_PRINT_RAW_API = False  # 设置为 True 时打印原始API返回
 # ================================
 
 
@@ -136,10 +139,16 @@ def update_patient(patient_id, files):
 
         task_id = None
         update_success = False
+        ai_response_started = False  # 标记是否已开始AI回复
 
         for line in response.iter_lines():
             if line:
                 line_str = line.decode('utf-8')
+
+                # 调试：打印原始API返回
+                if DEBUG_PRINT_RAW_API:
+                    print(f"📥 原始API返回: {line_str}")
+
                 if line_str.startswith('data: '):
                     data_str = line_str[6:]
                     try:
@@ -157,6 +166,28 @@ def update_patient(patient_id, files):
                             stage = data.get('stage', '')
                             stage_info = f' ({stage})' if stage else ''
                             print(f"[{progress:3d}%] {message}{stage_info}")
+
+                        # 显示流式AI回复
+                        elif data.get('status') == 'streaming_response':
+                            chunk_content = data.get('message', '')
+                            is_chunk = data.get('is_chunk', False)
+                            stage = data.get('stage', '')
+
+                            if stage == 'confirmation' and chunk_content:
+                                # 第一次输出时显示标题
+                                if not ai_response_started:
+                                    print(f"\n{'='*80}")
+                                    print(f"🤖 AI确认消息：")
+                                    print(f"{'='*80}")
+                                    ai_response_started = True
+
+                                # 实时打印AI回复（不换行）
+                                print(chunk_content, end='', flush=True)
+                            elif stage == 'confirmation_complete':
+                                # 回复结束，换行
+                                if ai_response_started:
+                                    print()  # 换行
+                                    print(f"{'='*80}\n")
 
                         # 完成
                         elif data.get('status') == 'completed':
