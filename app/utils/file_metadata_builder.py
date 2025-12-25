@@ -7,6 +7,7 @@ from typing import List, Dict, Any
 from app.config.file_constants import (
     IMAGE_EXTENSIONS, DOCUMENT_EXTENSIONS, TEXT_EXTENSIONS
 )
+from app.utils.timezone_utils import get_beijing_now_naive
 from src.utils.logger import BeijingLogger
 
 logger = BeijingLogger().get_logger()
@@ -110,7 +111,7 @@ class FileMetadataBuilder:
             "file_size": len(file_content) if file_content else 0,
             "file_content": file_content,
             "extracted_text": extracted_text,
-            "upload_timestamp": time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime()),
+            "upload_timestamp": get_beijing_now_naive().strftime('%Y-%m-%dT%H:%M:%S'),  # 🔧 修复：使用北京时间
             "exam_date": result.get('exam_date'),
 
             # ZIP相关字段

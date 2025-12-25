@@ -172,7 +172,7 @@ process_patient_data_task:
           "name": "患者姓名(如有,不要出现多个)",
           "age": "年龄",
           "gender": "性别",
-          "purpose": "就诊目的", 取值范围为:
+          "purpose": "就诊目的",
           "main_complaint": "主诉" # 这个是最近一次患者的主诉,也就是日期最新的一次
         }},
         "medical_history": [
