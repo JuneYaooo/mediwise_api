@@ -5,7 +5,7 @@ PPT API 测试脚本
 import requests
 import json
 
-BASE_URL = "http://182.254.240.153:9527" #"http://localhost:9527"
+BASE_URL = "http://localhost:9527"#"http://182.254.240.153:9527" #"http://localhost:9527"
 
 def test_get_ppt_data(patient_id):
     """测试获取 PPT 数据"""
@@ -87,82 +87,75 @@ def test_generate_ppt(patient_id):
         return False
 
 
-def list_patients():
-    """列出最近的患者"""
-    print(f"\n{'='*60}")
-    print(f"👥 查询最近的患者列表")
-    print(f"{'='*60}")
+def verify_patient_exists(patient_id):
+    """验证患者是否存在"""
+    try:
+        url = f"{BASE_URL}/api/patients/{patient_id}/ppt_data"
+        response = requests.get(url, timeout=5)
 
-    from sqlalchemy import create_engine, text
-    from app.db.database import DATABASE_URL
-
-    engine = create_engine(DATABASE_URL)
-
-    with engine.connect() as conn:
-        result = conn.execute(text("""
-            SELECT
-                patient_id,
-                name,
-                created_at
-            FROM bus_patient
-            WHERE is_deleted = false
-            ORDER BY created_at DESC
-            LIMIT 5;
-        """))
-
-        patients = list(result)
-
-        if patients:
-            print(f"\n找到 {len(patients)} 个患者:\n")
-            for i, p in enumerate(patients, 1):
-                print(f"{i}. ID: {p[0]}")
-                print(f"   姓名: {p[1]}")
-                print(f"   创建时间: {p[2]}")
-                print()
-            return [p[0] for p in patients]
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                patient_info = data['data']['patient_info']
+                return True, patient_info
+            else:
+                return False, None
         else:
-            print("❌ 没有找到患者")
-            return []
+            return False, None
+
+    except Exception as e:
+        return False, None
 
 
 if __name__ == "__main__":
     import sys
 
+    # ========================================
+    # 配置区域 - 直接在这里修改配置
+    # ========================================
+
+    # 配置1: 指定要测试的 patient_id（必填）
+    PATIENT_ID = "685f1678-8260-41fa-8b7c-660c299bf44b"  # 👈 修改为实际的患者ID
+
+    # 配置2: 是否要生成 PPT
+    GENERATE_PPT = True  # True: 测试获取数据 + 生成PPT, False: 只测试获取数据
+
+    # ========================================
+
     print("=" * 60)
     print("🏥 MediWise PPT API 测试工具")
     print("=" * 60)
 
-    # 1. 列出患者
-    patient_ids = list_patients()
-
-    if not patient_ids:
-        print("\n❌ 没有可测试的患者，请先上传患者数据")
+    # 1. 检查配置
+    if not PATIENT_ID:
+        print("\n❌ 错误：请在脚本中配置 PATIENT_ID")
+        print("💡 提示：将 PATIENT_ID 变量设置为实际的患者ID")
         sys.exit(1)
 
-    # 2. 选择患者
-    if len(sys.argv) > 1:
-        patient_id = sys.argv[1]
-        print(f"\n使用命令行参数指定的患者: {patient_id}")
+    print(f"\n📋 测试配置:")
+    print(f"   患者ID: {PATIENT_ID}")
+    print(f"   生成PPT: {'是' if GENERATE_PPT else '否'}")
 
-        # 检查是否要生成 PPT
-        if len(sys.argv) > 2 and sys.argv[2] == 'generate':
-            test_get_ppt_data(patient_id)
-            test_generate_ppt(patient_id)
-            print("\n" + "=" * 60)
-            print("测试完成！")
-            print("=" * 60)
-            sys.exit(0)
+    # 2. 验证患者是否存在
+    print(f"\n🔍 验证患者是否存在...")
+    exists, patient_info = verify_patient_exists(PATIENT_ID)
+
+    if exists:
+        print(f"✅ 患者存在")
+        print(f"   姓名: {patient_info.get('name', 'N/A')}")
     else:
-        patient_id = patient_ids[0]
-        print(f"\n使用最近的患者: {patient_id}")
+        print(f"❌ 患者不存在或无法访问: {PATIENT_ID}")
+        print(f"💡 提示：请检查 PATIENT_ID 是否正确")
+        sys.exit(1)
 
     # 3. 测试获取 PPT 数据
-    success1 = test_get_ppt_data(patient_id)
+    success1 = test_get_ppt_data(PATIENT_ID)
 
-    # 4. 提示如何生成 PPT
-    if success1:
-        print("\n提示：如需测试生成 PPT，请运行:")
-        print(f"  python test_ppt_api.py {patient_id} generate")
+    # 4. 根据配置决定是否生成 PPT
+    if GENERATE_PPT and success1:
+        test_generate_ppt(PATIENT_ID)
+    elif success1 and not GENERATE_PPT:
+        print("\n💡 提示：如需测试生成 PPT，请将脚本中的 GENERATE_PPT 设置为 True")
 
     print("\n" + "=" * 60)
     print("测试完成！")

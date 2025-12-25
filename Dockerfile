@@ -28,6 +28,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/ && \
     pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
+# 安装 Playwright 浏览器及依赖
+RUN playwright install --with-deps chromium
+
 # 复制应用代码
 COPY . .
 
