@@ -1000,7 +1000,7 @@ MIME类型: {mime_type}
                                             
                                             if file_ext in ['.png', '.jpg', '.jpeg', '.webp', '.heic', '.heif', '.pdf', '.docx', '.pptx', '.ppt']:
                                                 # 为二进制文件创建持久副本
-                                                persistent_filename = f"{sub_result.get('file_uuid', uuid.uuid4().hex)}{file_ext}"
+                                                persistent_filename = f"{sub_result.get('file_uuid', str(uuid.uuid4()))}{file_ext}"
                                                 persistent_path = os.path.join(persistent_temp_dir, persistent_filename)
                                                 
                                                 try:
@@ -1024,7 +1024,7 @@ MIME类型: {mime_type}
                                         file_ext = os.path.splitext(filename)[1].lower()
                                         
                                         if file_ext in ['.png', '.jpg', '.jpeg', '.webp', '.heic', '.heif', '.pdf', '.docx', '.pptx', '.ppt']:
-                                            persistent_filename = f"{result.get('file_uuid', uuid.uuid4().hex)}{file_ext}"
+                                            persistent_filename = f"{result.get('file_uuid', str(uuid.uuid4()))}{file_ext}"
                                             persistent_path = os.path.join(persistent_temp_dir, persistent_filename)
                                             
                                             try:

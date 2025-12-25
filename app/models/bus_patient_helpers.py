@@ -552,7 +552,7 @@ class BusPatientHelper:
 
         result["raw_files_data"] = [
             {
-                "file_uuid": f.id,
+                "file_uuid": f.file_uuid,
                 "file_name": f.file_name,
                 "file_url": f.file_url,
                 "file_type": f.file_type,
