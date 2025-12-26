@@ -357,41 +357,31 @@ GET /api/patient_data/task_status/uuid-xxx-xxx
 
 ---
 
-## 2. 患者对话更新接口
+## 2. 患者对话更新接口（已合并）
 
-### 2.1 对话式患者信息更新
+> ⚠️ **注意**: 此功能已合并到 **[3. 患者多轮对话接口](#3-患者多轮对话接口统一入口)** 中。
+> 
+> 现在使用统一的 `POST /api/patients/{patient_id}/chat` 接口，系统会自动识别用户意图：
+> - 上传文件或要求更新数据 → 自动调用 `PatientDataCrew` 更新结构化数据
+> - 普通对话问题 → 直接回答用户问题
+> 
+> **不再需要单独调用数据更新接口。**
 
-**接口**: `POST /api/patients/{patient_id}/chat`
+### 2.1 对话式患者信息更新（已合并到多轮对话接口）
 
-**功能说明**:
-- 支持对话式交互更新患者信息
-- 支持文本消息和文件上传
-- 自动提取结构化数据并更新患者记录
-- 流式返回处理进度
+请参考 **[3.1 与患者对话聊天](#31-与患者对话聊天)**
 
-**请求方式**: `POST`
+当您在对话中：
+- 上传文件（CT报告、检验单等）
+- 或消息中包含"更新"、"修改"、"添加"等关键词
 
-**Content-Type**: `application/json`
+系统会自动识别为"数据更新"意图，并执行以下操作：
+1. 提取文件中的结构化数据
+2. 更新患者时间轴（`bus_patient_structured_data`）
+3. 保存对话记录（`bus_conversation_messages`）
+4. 返回更新确认和结构化数据
 
-**路径参数**:
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| patient_id | string | 是 | 患者ID（从首次处理接口返回） |
-
-**请求参数**:
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| message | string | 否 | 用户消息文本 |
-| files | array | 否 | 文件列表 |
-| files[].file_name | string | 是 | 文件名（含扩展名） |
-| files[].file_content | string | 是 | 文件内容（Base64 编码） |
-
-**注意**:
-- `message` 和 `files` 至少需要提供一个
-
-**请求示例**:
+**示例请求**（上传新报告并更新数据）:
 
 ```json
 {
@@ -405,28 +395,21 @@ GET /api/patient_data/task_status/uuid-xxx-xxx
 }
 ```
 
-**响应格式**: `text/event-stream` (Server-Sent Events)
-
-**流式响应示例**:
+**响应中会包含意图识别结果和处理进度**:
 
 ```
-data: {"status": "processing", "stage": "message_saved", "message": "消息已保存", "progress": 5}
+data: {"status": "processing", "stage": "intent_detected", "message": "意图识别: update_data (置信度: 95%)", "intent": "update_data", "intent_confidence": 0.95, "progress": 28}
 
-data: {"status": "processing", "stage": "file_processing", "message": "正在处理 1 个文件", "progress": 10}
+data: {"status": "processing", "stage": "data_extraction", "message": "正在提取患者数据...", "progress": 35}
 
-data: {"status": "processing", "stage": "file_processed", "message": "文件处理完成，共 1 个", "progress": 30}
+data: {"status": "processing", "stage": "crew_processing", "message": "正在分析文件并提取结构化数据...", "progress": 40}
 
-data: {"status": "processing", "stage": "data_updating", "message": "正在更新患者数据", "progress": 40}
+data: {"status": "processing", "stage": "data_saved", "message": "患者数据已更新", "progress": 90}
 
-data: {"status": "processing", "stage": "data_saved", "message": "数据已保存", "progress": 95}
+data: {"status": "streaming", "stage": "response", "content": "✅ **患者数据更新成功！**\n- 已处理 1 个文件\n- 时间轴包含 5 条记录", "progress": 95}
 
-data: {"status": "completed", "message": "✅ 患者信息已更新成功！", "progress": 100, "duration": 45.67, "data": {"patient_id": "xxx", "conversation_id": "xxx", "files_count": 1}}
+data: {"status": "tool_output", "stage": "patient_timeline", "data": {"tool_name": "patient_timeline", "content": {...}}}
 ```
-
-**HTTP 状态码**:
-- `200`: 成功建立流式连接
-- `400`: 请求参数错误
-- `404`: 患者不存在
 - `500`: 服务器内部错误
 
 **使用说明**:
@@ -437,23 +420,32 @@ data: {"status": "completed", "message": "✅ 患者信息已更新成功！", "
 
 ---
 
-## 3. 患者多轮对话接口
+## 3. 患者多轮对话接口（统一入口）
 
-> **注意**: 此接口与"患者对话更新接口"的区别：
-> - **患者对话更新接口** (`POST /api/patient_data/patients/{patient_id}/chat`): 用于更新患者的结构化数据（提取信息并保存到时间轴）
-> - **患者多轮对话接口** (`POST /api/patients/{patient_id}/chat`): 用于与AI助手进行多轮对话聊天，对话历史保存到 `bus_conversation_messages` 表
+> **重要说明**: 此接口是患者对话和数据更新的统一入口，通过意图识别自动判断用户需求：
+> - **普通对话**: 直接回答用户问题，结合患者上下文信息
+> - **数据更新**: 当用户上传文件或明确要求更新数据时，自动调用 `PatientDataCrew` 提取并保存结构化数据
 
 ### 3.1 与患者对话聊天
 
 **接口**: `POST /api/patients/{patient_id}/chat`
 
 **功能说明**:
-- 基于指定患者进行多轮对话聊天
-- 支持文本消息和文件上传
-- 流式返回 AI 回复内容
-- 自动保存对话历史到 `bus_conversation_messages` 表
-- 支持继续已有会话或创建新会话
-- 对话上下文包含患者的时间轴数据
+- 🔄 **智能意图识别**: 自动判断用户意图（对话 or 数据更新）
+- 💬 **普通对话**: 基于患者信息回答问题
+- 📄 **数据更新**: 上传文件时自动提取并更新患者结构化数据
+- 📝 **自动保存**: 对话历史保存到 `bus_conversation_messages` 表
+- 🔗 **多轮会话**: 支持继续已有会话或创建新会话
+- 📊 **上下文感知**: 对话上下文包含患者的时间轴数据
+
+**意图识别方式**:
+- 🧠 **大模型智能识别**: 使用 LLM 分析用户消息的语义，判断用户意图
+- 📄 **文件上传快速路径**: 如果用户上传了文件，直接识别为"数据更新"意图（无需调用LLM）
+- 💬 **语义理解**: 
+  - "帮我录入这份CT报告" → 数据更新
+  - "患者的诊断结果是什么？" → 普通对话
+  - "补充一下患者的用药信息" → 数据更新
+  - "这个治疗方案有什么建议？" → 普通对话
 
 **请求方式**: `POST`
 

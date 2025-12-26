@@ -2,9 +2,11 @@
 患者对话聊天接口 - 基于 patient_id 的多轮对话
 使用 bus_patient_conversations 和 bus_conversation_messages 表
 
-此接口区别于 patient_data_processing.py 中的数据处理接口：
-- patient_data_processing.py: 用于首次创建患者和更新患者数据（结构化提取）
-- patient_chat.py: 用于基于某个 patient_id 进行多轮对话聊天
+此接口支持：
+1. 普通对话 - 根据用户问题和患者上下文回答
+2. 患者数据更新 - 上传新文件或明确要求更新患者信息时，自动调用 PatientDataCrew 更新结构化数据
+
+通过意图识别自动判断用户需求，无需单独调用不同接口。
 """
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
 from fastapi.responses import StreamingResponse
@@ -14,6 +16,8 @@ import json
 import asyncio
 import time
 import uuid
+import os
+from concurrent.futures import ThreadPoolExecutor
 
 from app.db.database import get_db
 from app.models.bus_models import (
@@ -29,6 +33,146 @@ from src.utils.logger import BeijingLogger
 
 # 初始化 logger
 logger = BeijingLogger().get_logger()
+
+
+# ============================================================================
+# 意图识别相关 - 使用大模型识别
+# ============================================================================
+
+async def detect_intent_with_llm(
+    message: str, 
+    files: List[Dict] = None,
+    patient_context: Dict[str, Any] = None
+) -> Dict[str, Any]:
+    """
+    使用大模型进行意图识别
+    
+    意图类型:
+    - update_data: 用户要更新患者数据（上传文件、补充信息、修改记录等）
+    - chat: 普通对话（咨询问题、询问建议等）
+    
+    返回:
+        {
+            "intent": "update_data" | "chat",
+            "reason": str,
+            "confidence": float
+        }
+    """
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import HumanMessage, SystemMessage
+    
+    try:
+        # 如果有文件上传，直接判定为更新数据（不需要调用LLM）
+        if files and len(files) > 0:
+            return {
+                "intent": "update_data",
+                "reason": f"用户上传了 {len(files)} 个文件，需要提取并更新患者数据",
+                "confidence": 1.0
+            }
+        
+        # 使用大模型进行意图识别
+        model = ChatOpenAI(
+            model=os.getenv('GENERAL_CHAT_MODEL_NAME', 'deepseek-chat'),
+            api_key=os.getenv('GENERAL_CHAT_API_KEY'),
+            base_url=os.getenv('GENERAL_CHAT_BASE_URL'),
+            temperature=0.1,  # 低温度以获得更一致的结果
+            timeout=30
+        )
+        
+        # 构建患者上下文信息
+        patient_info_str = ""
+        if patient_context:
+            patient_info = patient_context.get("patient_info") or {}
+            if patient_info:
+                patient_info_str = f"当前患者: {patient_info.get('name', '未知')}"
+        
+        system_prompt = """你是一个医疗AI助手的意图识别模块。你需要判断用户消息的意图类型。
+
+意图类型只有两种：
+1. **update_data** - 用户想要更新/补充/修改患者数据
+   - 例如：要录入新的检查报告、补充病历信息、更新诊断结果、添加用药记录等
+   - 关键特征：涉及到"录入"、"补充"、"更新"、"添加"、"修改"患者的医疗数据
+
+2. **chat** - 用户想要咨询/对话/提问
+   - 例如：询问治疗建议、咨询病情分析、请求诊断意见、问关于患者的问题等
+   - 关键特征：用户在询问、请求分析、寻求建议
+
+请严格按照以下JSON格式回复（不要输出其他内容）：
+{"intent": "update_data或chat", "reason": "简短说明判断理由", "confidence": 0.0到1.0之间的置信度}"""
+
+        user_prompt = f"""{patient_info_str}
+
+用户消息：{message}
+
+请判断用户意图："""
+
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ]
+        
+        response = await model.ainvoke(messages)
+        response_text = response.content.strip()
+        
+        # 解析JSON响应
+        try:
+            # 尝试直接解析
+            result = json.loads(response_text)
+        except json.JSONDecodeError:
+            # 尝试提取JSON部分
+            import re
+            json_match = re.search(r'\{[^}]+\}', response_text)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                # 解析失败，默认为chat
+                logger.warning(f"意图识别响应解析失败: {response_text}")
+                return {
+                    "intent": "chat",
+                    "reason": "意图识别响应解析失败，默认为对话",
+                    "confidence": 0.5
+                }
+        
+        # 验证意图类型
+        intent = result.get("intent", "chat")
+        if intent not in ["update_data", "chat"]:
+            intent = "chat"
+        
+        return {
+            "intent": intent,
+            "reason": result.get("reason", ""),
+            "confidence": float(result.get("confidence", 0.8))
+        }
+        
+    except Exception as e:
+        logger.error(f"意图识别失败: {str(e)}")
+        # 出错时默认为chat
+        return {
+            "intent": "chat",
+            "reason": f"意图识别出错，默认为对话: {str(e)}",
+            "confidence": 0.5
+        }
+
+
+def detect_intent_sync(message: str, files: List[Dict] = None) -> Dict[str, Any]:
+    """
+    同步版本的意图识别（用于不支持异步的场景）
+    简单规则判断作为后备
+    """
+    # 如果有文件上传，直接判定为更新数据
+    if files and len(files) > 0:
+        return {
+            "intent": "update_data",
+            "reason": f"用户上传了 {len(files)} 个文件",
+            "confidence": 1.0
+        }
+    
+    # 默认为chat
+    return {
+        "intent": "chat",
+        "reason": "默认为对话模式",
+        "confidence": 0.5
+    }
 
 router = APIRouter()
 
@@ -324,204 +468,57 @@ async def stream_chat_processing(
         elif formatted_files:
             files_to_pass = formatted_files
         
-        # ========== 调用 Medical API 进行对话 ==========
-        progress_msg = {'status': 'processing', 'stage': 'ai_processing', 'message': '正在生成回复...', 'progress': 30}
+        # ========== 意图识别（使用大模型） ==========
+        intent_result = await detect_intent_with_llm(
+            message=message, 
+            files=files, 
+            patient_context=patient_context
+        )
+        intent = intent_result["intent"]
+        intent_reason = intent_result["reason"]
+        intent_confidence = intent_result.get("confidence", 0.8)
+        
+        logger.info(f"[对话任务 {task_id}] 意图识别结果: {intent}, 置信度: {intent_confidence}, 原因: {intent_reason}")
+        
+        progress_msg = {
+            'status': 'processing', 
+            'stage': 'intent_detected', 
+            'message': f'意图识别: {intent} (置信度: {intent_confidence:.0%})', 
+            'intent': intent,
+            'intent_reason': intent_reason,
+            'intent_confidence': intent_confidence,
+            'progress': 28
+        }
         yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0)
         
-        try:
-            from app.agents.medical_api import MedicalAPI, Message as MedicalMessage
-            
-            medical_api = MedicalAPI()
-            
-            # 构建消息列表
-            messages = []
-            for hist in conversation_history:
-                messages.append(MedicalMessage(role=hist["role"], content=hist["content"]))
-            
-            # 添加当前用户消息
-            user_message_obj = MedicalMessage(role="user", content=message)
-            if files_to_pass:
-                user_message_obj.files = files_to_pass
-            messages.append(user_message_obj)
-            
-            # 获取患者时间轴作为上下文
-            patient_timeline = patient_context.get("patient_timeline") or {}
-            
-            # 流式调用 medical_api
-            response_stream = medical_api.create(
-                messages=messages,
-                user_id=user_id,
-                session_id=conversation_id,
-                stream=True,
-                patient_timeline=patient_timeline
-            )
-            
-            # 收集完整回复
-            full_response = ""
-            tool_outputs = []
-            
-            async for chunk in response_stream:
-                # 处理不同类型的响应
-                if hasattr(chunk, 'object'):
-                    chunk_type = chunk.object if hasattr(chunk, 'object') else getattr(chunk, 'type', 'unknown')
-                    
-                    if chunk_type == 'chat.completion.chunk':
-                        # 文本内容
-                        if hasattr(chunk, 'choices') and chunk.choices:
-                            delta = chunk.choices[0].delta
-                            if hasattr(delta, 'content') and delta.content:
-                                content = delta.content
-                                full_response += content
-                                
-                                # 流式返回文本块
-                                stream_msg = {
-                                    'status': 'streaming',
-                                    'stage': 'response',
-                                    'content': content,
-                                    'progress': 50
-                                }
-                                yield f"data: {json.dumps(stream_msg, ensure_ascii=False)}\n\n"
-                                await asyncio.sleep(0)
-                    
-                    elif chunk_type in ['tool_output', 'status', 'thinking']:
-                        # 工具输出或状态消息
-                        status_msg = {
-                            'status': 'processing',
-                            'stage': chunk_type,
-                            'data': chunk.dict() if hasattr(chunk, 'dict') else str(chunk),
-                            'progress': 40
-                        }
-                        yield f"data: {json.dumps(status_msg, ensure_ascii=False)}\n\n"
-                        await asyncio.sleep(0)
-                        
-                        if chunk_type == 'tool_output':
-                            tool_outputs.append(chunk.dict() if hasattr(chunk, 'dict') else {'content': str(chunk)})
-                else:
-                    # 处理字典类型的响应
-                    if isinstance(chunk, dict):
-                        chunk_type = chunk.get('object') or chunk.get('type', 'unknown')
-                        
-                        if chunk_type == 'chat.completion.chunk':
-                            choices = chunk.get('choices', [])
-                            if choices:
-                                delta = choices[0].get('delta', {})
-                                content = delta.get('content', '')
-                                if content:
-                                    full_response += content
-                                    
-                                    stream_msg = {
-                                        'status': 'streaming',
-                                        'stage': 'response',
-                                        'content': content,
-                                        'progress': 50
-                                    }
-                                    yield f"data: {json.dumps(stream_msg, ensure_ascii=False)}\n\n"
-                                    await asyncio.sleep(0)
-                        
-                        elif chunk_type in ['tool_output', 'status', 'thinking']:
-                            status_msg = {
-                                'status': 'processing',
-                                'stage': chunk_type,
-                                'data': chunk,
-                                'progress': 40
-                            }
-                            yield f"data: {json.dumps(status_msg, ensure_ascii=False)}\n\n"
-                            await asyncio.sleep(0)
-                            
-                            if chunk_type == 'tool_output':
-                                tool_outputs.append(chunk)
-            
-            # 保存助手回复
-            if full_response:
-                # 获取用户消息ID作为parent_id
-                user_messages = db.query(ConversationMessage).filter(
-                    ConversationMessage.conversation_id == conversation_id,
-                    ConversationMessage.role == "user"
-                ).order_by(ConversationMessage.sequence_number.desc()).first()
-                
-                parent_id = user_messages.message_id if user_messages else None
-                
-                save_message(
-                    db=db,
-                    conversation_id=conversation_id,
-                    role="assistant",
-                    content=full_response,
-                    message_type="reply",
-                    parent_id=parent_id,
-                    agent_name="medical_assistant",
-                    tool_outputs=tool_outputs if tool_outputs else None
-                )
-                db.commit()
-                
-                logger.info(f"[对话任务 {task_id}] 助手回复已保存，长度: {len(full_response)}")
-            
-            # 检查 tool_outputs 中是否有结构化数据更新
-            if tool_outputs:
-                for tool_output in tool_outputs:
-                    try:
-                        # 检查是否是患者数据更新
-                        tool_data = tool_output if isinstance(tool_output, dict) else (tool_output.dict() if hasattr(tool_output, 'dict') else {})
-                        tool_name = tool_data.get('tool_name', '') or tool_data.get('name', '')
-                        tool_content = tool_data.get('content', {})
-                        
-                        # 如果是患者信息修改工具的输出
-                        if tool_name in ['modify_patient_info', 'update_patient_data', 'patient_data_update']:
-                            if isinstance(tool_content, str):
-                                try:
-                                    tool_content = json.loads(tool_content)
-                                except:
-                                    pass
-                            
-                            if isinstance(tool_content, dict):
-                                # 提取更新的数据
-                                updated_timeline = tool_content.get('patient_timeline') or tool_content.get('timeline')
-                                updated_journey = tool_content.get('patient_journey') or tool_content.get('journey')
-                                updated_mdt_report = tool_content.get('mdt_simple_report') or tool_content.get('mdt_report')
-                                
-                                if updated_timeline or updated_journey or updated_mdt_report:
-                                    # 保存结构化数据更新
-                                    BusPatientHelper.save_structured_data(
-                                        db=db,
-                                        patient_id=patient_id,
-                                        conversation_id=conversation_id,
-                                        user_id=user_id,
-                                        patient_timeline=updated_timeline,
-                                        patient_journey=updated_journey,
-                                        mdt_simple_report=updated_mdt_report,
-                                        patient_full_content=None
-                                    )
-                                    db.commit()
-                                    logger.info(f"[对话任务 {task_id}] 已保存结构化数据更新到 bus_patient_structured_data")
-                    except Exception as e:
-                        logger.warning(f"[对话任务 {task_id}] 处理 tool_output 时出错: {str(e)}")
-        
-        except ImportError as e:
-            # 如果没有 medical_api，使用简单的回复
-            logger.warning(f"Medical API 不可用，使用模拟回复: {str(e)}")
-            
-            full_response = f"您好，我是医疗助手。您说：\"{message}\"。目前系统正在配置中，请稍后再试。"
-            
-            # 流式返回模拟回复
-            for char in full_response:
-                stream_msg = {
-                    'status': 'streaming',
-                    'stage': 'response',
-                    'content': char,
-                    'progress': 50
-                }
-                yield f"data: {json.dumps(stream_msg, ensure_ascii=False)}\n\n"
-                await asyncio.sleep(0.02)
-            
-            # 保存助手回复
-            save_message(
-                db=db,
+        # ========== 根据意图分支处理 ==========
+        if intent == "update_data":
+            # 更新患者数据分支 - 调用 PatientDataCrew
+            async for chunk in _process_update_data(
+                task_id=task_id,
+                patient_id=patient_id,
                 conversation_id=conversation_id,
-                role="assistant",
-                content=full_response,
-                message_type="reply"
-            )
-            db.commit()
+                message=message,
+                files_to_pass=files_to_pass,
+                user_id=user_id,
+                patient_context=patient_context,
+                db=db
+            ):
+                yield chunk
+        else:
+            # 普通对话分支 - 使用通用 LLM 回复
+            async for chunk in _process_chat(
+                task_id=task_id,
+                patient_id=patient_id,
+                conversation_id=conversation_id,
+                message=message,
+                files_to_pass=files_to_pass,
+                conversation_history=conversation_history,
+                patient_context=patient_context,
+                db=db
+            ):
+                yield chunk
         
         # 更新会话的 last_message_at
         conversation = db.query(PatientConversation).filter(
@@ -537,41 +534,330 @@ async def stream_chat_processing(
         
         final_result = {
             "status": "completed",
-            "message": "对话处理完成",
+            "message": "处理完成",
             "progress": 100,
             "duration": overall_duration,
             "result": {
                 "patient_id": patient_id,
                 "conversation_id": conversation_id,
-                "response_length": len(full_response) if full_response else 0,
-                "files_processed": len(uploaded_file_ids),
-                "files_saved": len(raw_files_data)  # 保存到数据库的文件数
+                "intent": intent,
+                "files_processed": len(uploaded_file_ids)
             }
         }
         
         yield f"data: {json.dumps(final_result, ensure_ascii=False)}\n\n"
-        await asyncio.sleep(0)
         
-        chat_task_status_store[task_id] = final_result
         logger.info(f"[对话任务 {task_id}] 处理完成，耗时: {overall_duration:.2f}秒")
         
-    except asyncio.CancelledError:
-        logger.warning(f"[对话任务 {task_id}] 客户端断开连接")
-        raise
-        
     except Exception as e:
-        logger.error(f"[对话任务 {task_id}] 处理异常: {str(e)}")
+        logger.error(f"[对话任务 {task_id}] 处理失败: {str(e)}")
         import traceback
-        logger.error(traceback.format_exc())
+        traceback.print_exc()
         
-        error_response = {
+        error_msg = {
             "status": "error",
             "message": f"处理失败: {str(e)}",
-            "error": str(e)
+            "error_type": type(e).__name__
         }
-        yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
-        await asyncio.sleep(0)
-        chat_task_status_store[task_id] = error_response
+        yield f"data: {json.dumps(error_msg, ensure_ascii=False)}\n\n"
+
+
+async def _process_update_data(
+    task_id: str,
+    patient_id: str,
+    conversation_id: str,
+    message: str,
+    files_to_pass: List[Dict],
+    user_id: str,
+    patient_context: Dict[str, Any],
+    db: Session
+):
+    """
+    处理更新患者数据的分支
+    调用 PatientDataCrew 提取并更新结构化数据
+    """
+    from src.crews.patient_data_crew.patient_data_crew import PatientDataCrew
+    
+    progress_msg = {'status': 'processing', 'stage': 'data_extraction', 'message': '正在提取患者数据...', 'progress': 35}
+    yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+    
+    try:
+        # 获取现有患者数据
+        existing_patient_data = {
+            "patient_timeline": patient_context.get("patient_timeline") or {},
+            "patient_journey": {},
+            "mdt_simple_report": {}
+        }
+        
+        # 获取更完整的现有数据
+        patient_detail = PatientDetailHelper.get_latest_patient_detail_by_patient_id(db, patient_id)
+        if patient_detail:
+            existing_patient_data["patient_journey"] = PatientDetailHelper.get_patient_journey(patient_detail) or {}
+            existing_patient_data["mdt_simple_report"] = PatientDetailHelper.get_mdt_simple_report(patient_detail) or {}
+        
+        # 初始化 PatientDataCrew
+        patient_data_crew = PatientDataCrew()
+        
+        progress_msg = {'status': 'processing', 'stage': 'crew_processing', 'message': '正在分析文件并提取结构化数据（可能需要5-10分钟）...', 'progress': 40}
+        yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+        
+        # 使用线程池执行同步的 crew 方法
+        loop = asyncio.get_event_loop()
+        
+        def run_crew():
+            return patient_data_crew.get_structured_patient_data(
+                patient_info=message,
+                patient_timeline=existing_patient_data.get("patient_timeline", {}),
+                messages=[],  # 不需要历史消息
+                files=files_to_pass,
+                agent_session_id=conversation_id,
+                existing_patient_data=existing_patient_data
+            )
+        
+        with ThreadPoolExecutor() as executor:
+            result = await loop.run_in_executor(executor, run_crew)
+        
+        if "error" in result:
+            error_msg = {'status': 'error', 'stage': 'crew_error', 'message': f'数据提取失败: {result["error"]}'}
+            yield f"data: {json.dumps(error_msg, ensure_ascii=False)}\n\n"
+            return
+        
+        progress_msg = {'status': 'processing', 'stage': 'data_extracted', 'message': '数据提取完成，正在保存...', 'progress': 80}
+        yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+        
+        # 保存结构化数据到数据库
+        patient_timeline = result.get('full_structure_data', {})
+        patient_journey = result.get('patient_journey', {})
+        mdt_simple_report = result.get('mdt_simple_report', {})
+        patient_content = result.get('patient_content', '')
+        
+        BusPatientHelper.save_structured_data(
+            db=db,
+            patient_id=patient_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            patient_timeline=patient_timeline,
+            patient_journey=patient_journey,
+            mdt_simple_report=mdt_simple_report,
+            patient_full_content=patient_content
+        )
+        db.commit()
+        
+        logger.info(f"[对话任务 {task_id}] 结构化数据已保存到 bus_patient_structured_data")
+        
+        progress_msg = {'status': 'processing', 'stage': 'data_saved', 'message': '患者数据已更新', 'progress': 90}
+        yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+        
+        # 生成确认消息
+        confirmation_message = _generate_update_confirmation(patient_timeline, files_to_pass)
+        
+        # 保存助手回复
+        save_message(
+            db=db,
+            conversation_id=conversation_id,
+            role="assistant",
+            content=confirmation_message,
+            message_type="reply",
+            agent_name="patient_data_processor"
+        )
+        db.commit()
+        
+        # 流式返回确认消息
+        stream_msg = {
+            'status': 'streaming',
+            'stage': 'response',
+            'content': confirmation_message,
+            'progress': 95
+        }
+        yield f"data: {json.dumps(stream_msg, ensure_ascii=False)}\n\n"
+        
+        # 返回工具输出（结构化数据）
+        tool_output = {
+            'status': 'tool_output',
+            'stage': 'patient_timeline',
+            'data': {
+                'tool_name': 'patient_timeline',
+                'tool_type': 'timeline',
+                'agent_name': '患者数据处理专家',
+                'content': {
+                    'patient_timeline': patient_timeline,
+                    'patient_journey': patient_journey,
+                    'mdt_simple_report': mdt_simple_report
+                }
+            }
+        }
+        yield f"data: {json.dumps(tool_output, ensure_ascii=False)}\n\n"
+        
+    except Exception as e:
+        logger.error(f"[对话任务 {task_id}] 数据更新失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        error_msg = {'status': 'error', 'stage': 'update_error', 'message': f'数据更新失败: {str(e)}'}
+        yield f"data: {json.dumps(error_msg, ensure_ascii=False)}\n\n"
+
+
+def _generate_update_confirmation(patient_timeline: Dict, files: List[Dict]) -> str:
+    """生成数据更新确认消息"""
+    files_count = len(files) if files else 0
+    
+    # 统计时间轴信息
+    timeline_entries = 0
+    if patient_timeline and isinstance(patient_timeline, dict):
+        timeline = patient_timeline.get('timeline', [])
+        if isinstance(timeline, list):
+            timeline_entries = len(timeline)
+    
+    message_parts = ["✅ **患者数据更新成功！**\n"]
+    
+    if files_count > 0:
+        message_parts.append(f"- 已处理 {files_count} 个文件")
+    
+    if timeline_entries > 0:
+        message_parts.append(f"- 时间轴包含 {timeline_entries} 条记录")
+    
+    message_parts.append("\n您可以继续对话，或查看更新后的患者信息。")
+    
+    return "\n".join(message_parts)
+
+
+async def _process_chat(
+    task_id: str,
+    patient_id: str,
+    conversation_id: str,
+    message: str,
+    files_to_pass: List[Dict],
+    conversation_history: List[Dict],
+    patient_context: Dict[str, Any],
+    db: Session
+):
+    """
+    处理普通对话的分支
+    使用通用 LLM 回复
+    """
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+    
+    progress_msg = {'status': 'processing', 'stage': 'ai_processing', 'message': '正在生成回复...', 'progress': 35}
+    yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+    
+    try:
+        # 初始化 LLM
+        model = ChatOpenAI(
+            model=os.getenv('GENERAL_CHAT_MODEL_NAME', 'deepseek-chat'),
+            api_key=os.getenv('GENERAL_CHAT_API_KEY'),
+            base_url=os.getenv('GENERAL_CHAT_BASE_URL'),
+            streaming=True,
+            timeout=600
+        )
+        
+        # 构建系统提示
+        patient_info = patient_context.get("patient_info") or {}
+        patient_timeline = patient_context.get("patient_timeline") or {}
+        
+        system_prompt = f"""你是一个专业的医疗AI助手 MediWise。你正在帮助医生处理关于特定患者的问题。
+
+【患者基本信息】
+{json.dumps(patient_info, ensure_ascii=False, indent=2) if patient_info else "暂无患者基本信息"}
+
+【患者时间轴数据】
+{json.dumps(patient_timeline, ensure_ascii=False, indent=2)[:5000] if patient_timeline else "暂无患者时间轴数据"}
+
+请根据上述患者信息，回答用户的问题。如果用户上传了新的文件或明确要求更新患者数据，请告知用户可以直接说"请更新患者数据"或上传文件来触发数据更新流程。
+
+回答要求：
+1. 专业、准确、简洁
+2. 结合患者的具体情况给出建议
+3. 如果信息不足，请明确指出需要哪些额外信息
+4. 使用中文回答
+"""
+        
+        # 构建消息列表
+        messages = [SystemMessage(content=system_prompt)]
+        
+        # 添加历史对话
+        for hist in conversation_history[-10:]:  # 只取最近10条历史
+            if hist["role"] == "user":
+                messages.append(HumanMessage(content=hist["content"]))
+            elif hist["role"] == "assistant":
+                messages.append(AIMessage(content=hist["content"]))
+        
+        # 添加当前用户消息
+        current_message = message
+        if files_to_pass:
+            file_info = "\n\n[用户上传的文件]:\n"
+            for f in files_to_pass:
+                file_info += f"- {f.get('file_name', '未知文件')}\n"
+            current_message += file_info
+        
+        messages.append(HumanMessage(content=current_message))
+        
+        # 流式生成回复
+        full_response = ""
+        async for chunk in model.astream(messages):
+            if hasattr(chunk, 'content') and chunk.content:
+                content = chunk.content
+                full_response += content
+                
+                stream_msg = {
+                    'status': 'streaming',
+                    'stage': 'response',
+                    'content': content,
+                    'progress': 60
+                }
+                yield f"data: {json.dumps(stream_msg, ensure_ascii=False)}\n\n"
+        
+        # 保存助手回复
+        if full_response:
+            # 获取用户消息ID作为parent_id
+            user_messages = db.query(ConversationMessage).filter(
+                ConversationMessage.conversation_id == conversation_id,
+                ConversationMessage.role == "user"
+            ).order_by(ConversationMessage.sequence_number.desc()).first()
+            
+            parent_id = user_messages.message_id if user_messages else None
+            
+            save_message(
+                db=db,
+                conversation_id=conversation_id,
+                role="assistant",
+                content=full_response,
+                message_type="reply",
+                parent_id=parent_id,
+                agent_name="chat_assistant"
+            )
+            db.commit()
+            
+            logger.info(f"[对话任务 {task_id}] 助手回复已保存，长度: {len(full_response)}")
+        
+        progress_msg = {'status': 'processing', 'stage': 'response_completed', 'message': '回复生成完成', 'progress': 95}
+        yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+        
+    except Exception as e:
+        logger.error(f"[对话任务 {task_id}] 对话处理失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        # 回退到简单回复
+        fallback_response = f"抱歉，处理您的请求时遇到了问题。您说：\"{message}\"。请稍后重试或联系管理员。"
+        
+        stream_msg = {
+            'status': 'streaming',
+            'stage': 'response',
+            'content': fallback_response,
+            'progress': 90
+        }
+        yield f"data: {json.dumps(stream_msg, ensure_ascii=False)}\n\n"
+        
+        # 保存回退回复
+        save_message(
+            db=db,
+            conversation_id=conversation_id,
+            role="assistant",
+            content=fallback_response,
+            message_type="reply"
+        )
+        db.commit()
 
 
 # ============================================================================
