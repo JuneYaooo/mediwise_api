@@ -686,7 +686,7 @@ async def chat_with_patient(
     db: Session = Depends(get_db),
 ) -> Any:
     """
-    患者对话接口 - 基于 patient_id 的多轮对话聊天
+    患者对话接口 - 基于 patient_id 的多轮对话聊天（混合模式）
     
     功能：
     - 与指定患者进行多轮对话
@@ -694,12 +694,21 @@ async def chat_with_patient(
     - 流式返回 AI 回复
     - 自动保存对话历史到 bus_conversation_messages 表
     - 支持继续已有会话或创建新会话
+    - 支持两种历史消息模式（混合模式）
     
     请求参数：
         - message: 用户消息文本（可选）
         - files: 文件列表（可选，每个文件需包含 file_name、file_content(base64)）
         - conversation_id: 会话ID（可选，不传则创建新会话）
+        - messages: 对话历史（可选，类似 OpenAI 格式）
+            格式: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
         - 注意：message 和 files 至少需要提供一个
+    
+    历史消息模式说明：
+        1. 只传 conversation_id：从数据库自动加载历史消息
+        2. 只传 messages：使用传入的消息作为上下文（无状态模式）
+        3. 两者都传：messages 优先作为上下文，但消息仍保存到 conversation_id 对应的会话
+        4. 都不传：创建新会话，无历史上下文
     
     返回：
         流式响应（Server-Sent Events 格式）
@@ -709,6 +718,7 @@ async def chat_with_patient(
         message = request.get("message", "").strip()
         files = request.get("files", [])
         conversation_id = request.get("conversation_id")
+        client_messages = request.get("messages", [])  # 客户端传入的历史消息（类似 OpenAI）
         
         # 2. 验证输入
         if not message and not files:
@@ -716,6 +726,25 @@ async def chat_with_patient(
                 status_code=400,
                 detail="message 和 files 至少需要提供一个"
             )
+        
+        # 验证 messages 格式
+        if client_messages:
+            if not isinstance(client_messages, list):
+                raise HTTPException(
+                    status_code=400,
+                    detail="messages 必须是数组格式"
+                )
+            for msg in client_messages:
+                if not isinstance(msg, dict) or "role" not in msg or "content" not in msg:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="messages 中每条消息必须包含 role 和 content 字段"
+                    )
+                if msg["role"] not in ["user", "assistant", "system"]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="messages 中 role 必须是 user、assistant 或 system"
+                    )
         
         # 3. 验证患者是否存在
         patient = db.query(Patient).filter(
@@ -755,8 +784,20 @@ async def chat_with_patient(
         )
         db.commit()
         
-        # 7. 获取会话历史
-        conversation_history = get_conversation_history(db, conversation_id)
+        # 7. 获取会话历史（混合模式）
+        # 优先使用客户端传入的 messages，否则从数据库加载
+        if client_messages:
+            # 客户端传入的历史消息（类似 OpenAI 模式）
+            conversation_history = [
+                {"role": msg["role"], "content": msg["content"]}
+                for msg in client_messages
+                if msg["role"] in ["user", "assistant"]  # 过滤掉 system 消息
+            ]
+            logger.info(f"[对话任务 {task_id}] 使用客户端传入的历史消息，共 {len(conversation_history)} 条")
+        else:
+            # 从数据库加载历史消息（conversation_id 模式）
+            conversation_history = get_conversation_history(db, conversation_id)
+            logger.info(f"[对话任务 {task_id}] 从数据库加载历史消息，共 {len(conversation_history)} 条")
         
         # 8. 获取患者上下文
         patient_context = get_patient_context(db, patient_id)
