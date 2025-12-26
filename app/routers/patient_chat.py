@@ -374,33 +374,10 @@ async def _process_update_data(
         
         logger.info(f"[对话任务 {task_id}] 结构化数据已保存到 bus_patient_structured_data")
         
-        progress_msg = {'status': 'processing', 'stage': 'data_saved', 'message': '患者数据已更新', 'progress': 90}
+        progress_msg = {'status': 'processing', 'stage': 'data_saved', 'message': '患者数据已更新，正在生成确认消息...', 'progress': 90}
         yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
         
-        # 生成确认消息
-        confirmation_message = _generate_update_confirmation(patient_timeline, files_to_pass)
-        
-        # 保存助手回复
-        save_message(
-            db=db,
-            conversation_id=conversation_id,
-            role="assistant",
-            content=confirmation_message,
-            message_type="reply",
-            agent_name="patient_data_processor"
-        )
-        db.commit()
-        
-        # 流式返回确认消息
-        stream_msg = {
-            'status': 'streaming',
-            'stage': 'response',
-            'content': confirmation_message,
-            'progress': 95
-        }
-        yield f"data: {json.dumps(stream_msg, ensure_ascii=False)}\n\n"
-        
-        # 返回工具输出（结构化数据）
+        # 返回工具输出（结构化数据）- 先返回工具输出，再返回流式确认消息
         tool_output = {
             'status': 'tool_output',
             'stage': 'patient_timeline',
@@ -417,6 +394,36 @@ async def _process_update_data(
         }
         yield f"data: {json.dumps(tool_output, ensure_ascii=False)}\n\n"
         
+        # 使用 LLM 生成流式确认消息
+        full_response = ""
+        async for chunk in _generate_streaming_confirmation(
+            user_requirement=user_requirement or message,
+            modify_type=modify_type,
+            patient_timeline=patient_timeline,
+            files_count=len(files_to_pass) if files_to_pass else 0
+        ):
+            full_response += chunk
+            stream_msg = {
+                'status': 'streaming',
+                'stage': 'response',
+                'content': chunk,
+                'progress': 95
+            }
+            yield f"data: {json.dumps(stream_msg, ensure_ascii=False)}\n\n"
+        
+        # 保存助手回复（保存完整的流式内容）
+        if full_response:
+            save_message(
+                db=db,
+                conversation_id=conversation_id,
+                role="assistant",
+                content=full_response,
+                message_type="reply",
+                agent_name="patient_data_processor"
+            )
+            db.commit()
+            logger.info(f"[对话任务 {task_id}] 助手回复已保存，长度: {len(full_response)}")
+        
     except Exception as e:
         logger.error(f"[对话任务 {task_id}] 数据更新失败: {str(e)}")
         import traceback
@@ -426,8 +433,86 @@ async def _process_update_data(
         yield f"data: {json.dumps(error_msg, ensure_ascii=False)}\n\n"
 
 
+async def _generate_streaming_confirmation(
+    user_requirement: str,
+    modify_type: str,
+    patient_timeline: Dict,
+    files_count: int
+):
+    """
+    使用 LLM 生成流式确认消息
+    
+    参考 medical_graph_stream.py 中的 generate_modification_confirmation 函数
+    """
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import HumanMessage
+    
+    try:
+        # 使用通用对话模型
+        model = ChatOpenAI(
+            model=os.getenv('GENERAL_CHAT_MODEL_NAME', 'deepseek-chat'),
+            api_key=os.getenv('GENERAL_CHAT_API_KEY'),
+            base_url=os.getenv('GENERAL_CHAT_BASE_URL'),
+            streaming=True,
+            timeout=600
+        )
+        
+        # 根据修改类型生成不同的确认消息
+        if modify_type == "add_new_data":
+            action_description = "新增患者数据"
+        else:
+            action_description = "修改患者信息"
+        
+        # 统计时间轴信息
+        timeline_entries = 0
+        if patient_timeline and isinstance(patient_timeline, dict):
+            timeline = patient_timeline.get('timeline', [])
+            if isinstance(timeline, list):
+                timeline_entries = len(timeline)
+        
+        # 构建上下文信息
+        context_info = []
+        if files_count > 0:
+            context_info.append(f"已处理 {files_count} 个文件")
+        if timeline_entries > 0:
+            context_info.append(f"时间轴包含 {timeline_entries} 条记录")
+        context_str = "、".join(context_info) if context_info else "数据已更新"
+        
+        prompt = f"""假设你是医疗AI助手Mediwise，刚刚完成了{action_description}的任务。请用简洁、专业且友好的语言向用户确认操作已完成。
+
+用户的原始需求：{user_requirement}
+
+完成情况：{context_str}
+
+请生成一个简短的确认消息，内容应该包括：
+1. 确认{action_description}已经完成
+2. 简要说明完成了什么操作（基于上述完成情况）
+3. 提醒用户可以查看更新后的患者信息
+4. 询问是否还需要其他帮助
+
+语言要求：
+- 使用中文
+- 语气专业但亲切
+- 简洁明了，不要过于冗长（控制在100字以内）
+- 体现医疗AI的专业性
+- 使用适当的emoji增加友好感"""
+
+        messages = [HumanMessage(content=prompt)]
+        
+        # 流式输出确认消息
+        async for chunk in model.astream(messages):
+            if hasattr(chunk, 'content') and chunk.content:
+                yield chunk.content
+                
+    except Exception as e:
+        logger.error(f"生成流式确认消息失败: {str(e)}")
+        # 回退到简单的确认消息
+        action_description = "新增患者数据" if modify_type == "add_new_data" else "修改患者信息"
+        yield f"✅ {action_description}已完成！您可以查看更新后的患者信息。如需其他帮助，请随时告诉我。"
+
+
 def _generate_update_confirmation(patient_timeline: Dict, files: List[Dict]) -> str:
-    """生成数据更新确认消息"""
+    """生成数据更新确认消息（备用方法，同步版本）"""
     files_count = len(files) if files else 0
     
     # 统计时间轴信息

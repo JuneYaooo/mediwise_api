@@ -107,17 +107,46 @@ def load_last_n_files(max_files=3):
     return files
 
 
-def update_patient(patient_id, files):
-    """通过chat接口更新现有患者数据"""
+def update_patient_with_files(patient_id, files):
+    """
+    测试场景1：通过chat接口新增患者数据（上传文件）
+    
+    这会触发 modify_type = "add_new_data"，使用 PatientDataCrew 处理
+    """
     print(f"\n{'='*80}")
-    print(f"🔄 通过对话接口更新患者数据")
+    print(f"🔄 测试场景1：新增患者数据（上传文件）")
     print(f"{'='*80}\n")
 
     payload = {
         "message": "补充最新复查报告和影像资料，用于跟踪治疗效果，调整治疗方案",
         "files": files
     }
+    
+    return _send_chat_request(patient_id, payload)
 
+
+def modify_patient_data(patient_id):
+    """
+    测试场景2：修改现有患者数据（不上传文件）
+    
+    这会触发 modify_type = "modify_current_data"，使用 PatientInfoUpdateCrew 处理
+    """
+    print(f"\n{'='*80}")
+    print(f"🔄 测试场景2：修改现有患者数据")
+    print(f"{'='*80}\n")
+
+    payload = {
+        "message": "请把患者的过敏史更新为：青霉素过敏、头孢类过敏",
+        "files": []  # 不上传文件，只修改现有数据
+    }
+    
+    return _send_chat_request(patient_id, payload)
+
+
+def _send_chat_request(patient_id, payload):
+    """发送chat请求的通用方法"""
+    files = payload.get('files', [])
+    
     print(f"📤 发送请求到: {API_BASE_URL}/api/patients/{patient_id}/chat")
     print(f"🆔 患者ID: {patient_id}")
     print(f"📊 消息内容: {payload['message']}")
@@ -155,24 +184,53 @@ def update_patient(patient_id, files):
                     try:
                         data = json.loads(data_str)
 
+                        status = data.get('status')
+                        
+                        # 接收确认
+                        if status == 'received':
+                            print(f"📨 {data.get('message', '消息已接收')}")
+                        
                         # 显示进度
-                        if data.get('status') == 'processing':
+                        elif status == 'processing':
                             progress = data.get('progress', 0)
                             message = data.get('message', '')
                             stage = data.get('stage', '')
                             stage_info = f' ({stage})' if stage else ''
-                            print(f"[{progress:3d}%] {message}{stage_info}")
+                            
+                            # 显示意图识别结果
+                            if stage == 'intent_detected':
+                                intent = data.get('intent', '')
+                                confidence = data.get('intent_confidence', 0)
+                                print(f"[{progress:3d}%] {message}")
+                                print(f"       🎯 识别意图: {intent} (置信度: {confidence:.0%})")
+                            else:
+                                print(f"[{progress:3d}%] {message}{stage_info}")
+
+                        # 流式返回AI回复内容
+                        elif status == 'streaming':
+                            content = data.get('content', '')
+                            if content:
+                                print(content, end='', flush=True)
+                        
+                        # 工具输出（结构化数据）
+                        elif status == 'tool_output':
+                            tool_data = data.get('data', {})
+                            tool_name = tool_data.get('tool_name', '')
+                            print(f"\n📊 收到工具输出: {tool_name}")
+                            if DEBUG_PRINT_RAW_API:
+                                print(f"    内容: {json.dumps(tool_data.get('content', {}), ensure_ascii=False)[:500]}...")
 
                         # 完成
-                        elif data.get('status') == 'completed':
-                            result_data = data.get('data', {})
+                        elif status == 'completed':
+                            result_data = data.get('result', {})  # 修复：使用 'result' 而不是 'data'
 
                             print(f"\n{'='*80}")
                             print(f"✅ 患者数据更新成功!")
                             print(f"{'='*80}")
                             print(f"  患者ID: {result_data.get('patient_id')}")
                             print(f"  会话ID: {result_data.get('conversation_id')}")
-                            print(f"  新增文件: {result_data.get('files_count', 0)} 个")
+                            print(f"  识别意图: {result_data.get('intent', 'N/A')}")
+                            print(f"  处理文件: {result_data.get('files_processed', 0)} 个")  # 修复：使用 'files_processed'
                             print(f"  消息: {data.get('message', '')}")
                             print(f"  耗时: {data.get('duration', 0):.2f} 秒")
                             print(f"{'='*80}\n")
@@ -180,11 +238,12 @@ def update_patient(patient_id, files):
                             update_success = True
 
                         # 错误
-                        elif data.get('status') == 'error':
+                        elif status == 'error':
                             print(f"\n{'='*80}")
                             print(f"❌ 处理失败")
                             print(f"{'='*80}")
                             print(f"  错误信息: {data.get('message')}")
+                            print(f"  错误类型: {data.get('error_type', 'Unknown')}")
                             print(f"{'='*80}\n")
                             return False
 
@@ -225,12 +284,33 @@ def main():
     print(f"🌐 API地址: {API_BASE_URL}")
     print(f"📂 数据目录: {CASE_DIR}")
     print(f"⏰ 当前时间: {get_beijing_time()}")
-
-    # 加载后3个文件
-    files = load_last_n_files(max_files=MAX_FILES)
-
-    # 更新患者数据
-    success = update_patient(PATIENT_ID, files)
+    
+    # 选择测试场景
+    print(f"\n{'='*80}")
+    print(f"请选择测试场景:")
+    print(f"  1. 新增患者数据（上传文件）- 使用 PatientDataCrew")
+    print(f"  2. 修改现有患者数据（不上传文件）- 使用 PatientInfoUpdateCrew")
+    print(f"  3. 两个场景都测试")
+    print(f"{'='*80}")
+    
+    choice = input("请输入选项 (1/2/3，默认1): ").strip() or "1"
+    
+    success = True
+    
+    if choice in ["1", "3"]:
+        # 场景1：新增患者数据（上传文件）
+        files = load_last_n_files(max_files=MAX_FILES)
+        success = update_patient_with_files(PATIENT_ID, files) and success
+    
+    if choice in ["2", "3"]:
+        # 场景2：修改现有患者数据
+        if choice == "3":
+            print(f"\n{'='*80}")
+            print(f"⏳ 等待3秒后开始场景2...")
+            print(f"{'='*80}")
+            import time
+            time.sleep(3)
+        success = modify_patient_data(PATIENT_ID) and success
 
     if success:
         print(f"\n🎉 患者数据更新测试完成!")
