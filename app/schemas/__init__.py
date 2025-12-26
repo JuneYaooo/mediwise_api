@@ -5,4 +5,10 @@ from app.schemas.conversation import (
     FileBase, FileCreate, FileInDB, File,
     FeedbackBase, FeedbackCreate, FeedbackInDB, Feedback,
     StatusMessageCreate, ToolOutputCreate
+)
+from app.schemas.patient_chat import (
+    PatientChatRequest,
+    PatientConversationResponse,
+    ConversationMessageResponse,
+    IntentResult
 ) 
