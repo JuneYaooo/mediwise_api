@@ -172,12 +172,20 @@ async def detect_intent_with_llm(
             }
             intent = intent_mapping.get(intent, "chat")
         
+        # 根据意图确定默认的 modify_type
+        if intent == "modify_data":
+            default_modify_type = "modify_current_data"
+        elif intent == "update_data":
+            default_modify_type = "add_new_data"
+        else:
+            default_modify_type = None
+        
         return {
             "intent": intent,
             "reason": result.get("reason", ""),
             "confidence": float(result.get("confidence", 0.8)),
             "user_requirement": result.get("user_requirement", message),
-            "modify_type": result.get("modify_type", "add_new_data" if intent == "update_data" else None)
+            "modify_type": result.get("modify_type", default_modify_type)
         }
         
     except Exception as e:
