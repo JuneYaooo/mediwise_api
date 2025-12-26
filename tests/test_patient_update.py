@@ -30,7 +30,7 @@ API_BASE_URL = "http://182.254.240.153:9527"
 CASE_DIR = "/home/ubuntu/data/patient_case/xuguoqiang/"
 
 # ⚠️ 请在此填入要更新的患者ID（从 test_flow_simple.py 运行结果中获取）
-PATIENT_ID = "685f1678-8260-41fa-8b7c-660c299bf44b"  # 👈 修改这里
+PATIENT_ID = "65315dd5-f5f5-4520-bf26-4ca236c7ff15"  # 👈 修改这里
 
 # 文件配置
 MAX_FILES = 3  # 读取后3个文件

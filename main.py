@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from app.routers import patient_data_processing, patient_ppt
+from app.routers import patient_data_processing, patient_ppt, patient_chat
 from app.db.database import engine, Base
 
 # Create database tables
@@ -37,6 +37,13 @@ app.include_router(
     tags=["patient_ppt"]
 )
 
+# 患者对话聊天接口 - 基于 patient_id 的多轮对话
+app.include_router(
+    patient_chat.router,
+    prefix="/api/patients",
+    tags=["patient_chat"]
+)
+
 
 @app.get("/")
 def root():
@@ -47,7 +54,8 @@ def root():
             "patient_data_processing": "/api/patient_data/process_patient_data_smart",
             "patient_data_task_status": "/api/patient_data/task_status/{task_id}",
             "patient_ppt_generate": "/api/patients/{patient_id}/generate_ppt",
-            "patient_ppt_data": "/api/patients/{patient_id}/ppt_data"
+            "patient_ppt_data": "/api/patients/{patient_id}/ppt_data",
+            "patient_chat": "/api/patients/{patient_id}/chat"
         }
     }
 

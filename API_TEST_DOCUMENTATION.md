@@ -15,9 +15,17 @@
 - [1. 患者数据处理接口](#1-患者数据处理接口)
   - [1.1 混合智能处理](#11-混合智能处理)
   - [1.2 查询任务状态](#12-查询任务状态)
-- [2. 患者 PPT 生成接口](#2-患者-ppt-生成接口)
-  - [2.1 生成患者 PPT](#21-生成患者-ppt)
-  - [2.2 获取患者 PPT 数据](#22-获取患者-ppt-数据)
+- [2. 患者对话更新接口](#2-患者对话更新接口)
+  - [2.1 对话式患者信息更新](#21-对话式患者信息更新)
+- [3. 患者多轮对话接口](#3-患者多轮对话接口)
+  - [3.1 与患者对话聊天](#31-与患者对话聊天)
+  - [3.2 获取患者聊天列表](#32-获取患者聊天列表)
+  - [3.3 获取聊天消息记录](#33-获取聊天消息记录)
+  - [3.4 查询对话任务状态](#34-查询对话任务状态)
+  - [3.5 删除聊天](#35-删除聊天)
+- [4. 患者 PPT 生成接口](#4-患者-ppt-生成接口)
+  - [4.1 生成患者 PPT](#41-生成患者-ppt)
+  - [4.2 获取患者 PPT 数据](#42-获取患者-ppt-数据)
 
 ---
 
@@ -429,9 +437,323 @@ data: {"status": "completed", "message": "✅ 患者信息已更新成功！", "
 
 ---
 
-## 3. 患者 PPT 生成接口
+## 3. 患者多轮对话接口
 
-### 3.1 生成患者 PPT
+> **注意**: 此接口与"患者对话更新接口"的区别：
+> - **患者对话更新接口** (`POST /api/patient_data/patients/{patient_id}/chat`): 用于更新患者的结构化数据（提取信息并保存到时间轴）
+> - **患者多轮对话接口** (`POST /api/patients/{patient_id}/chat`): 用于与AI助手进行多轮对话聊天，对话历史保存到 `bus_conversation_messages` 表
+
+### 3.1 与患者对话聊天
+
+**接口**: `POST /api/patients/{patient_id}/chat`
+
+**功能说明**:
+- 基于指定患者进行多轮对话聊天
+- 支持文本消息和文件上传
+- 流式返回 AI 回复内容
+- 自动保存对话历史到 `bus_conversation_messages` 表
+- 支持继续已有会话或创建新会话
+- 对话上下文包含患者的时间轴数据
+
+**请求方式**: `POST`
+
+**Content-Type**: `application/json`
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| patient_id | string | 是 | 患者ID（从首次处理接口返回） |
+
+**请求参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| message | string | 否 | 用户消息文本 |
+| files | array | 否 | 文件列表 |
+| files[].file_name | string | 是 | 文件名（含扩展名） |
+| files[].file_content | string | 是 | 文件内容（Base64 编码） |
+| conversation_id | string | 否 | 会话ID（可选，不传则创建新会话，传入则继续该会话） |
+
+**注意**:
+- `message` 和 `files` 至少需要提供一个
+
+**请求示例**:
+
+```json
+{
+  "message": "这位患者的治疗方案有什么建议？",
+  "conversation_id": "conv_uuid_xxx"
+}
+```
+
+**响应格式**: `text/event-stream` (Server-Sent Events)
+
+**流式响应示例**:
+
+```
+data: {"task_id": "task_uuid", "status": "received", "message": "消息已接收，正在处理...", "progress": 0}
+
+data: {"status": "processing", "stage": "ai_processing", "message": "正在生成回复...", "progress": 30}
+
+data: {"status": "streaming", "stage": "response", "content": "根据", "progress": 50}
+
+data: {"status": "streaming", "stage": "response", "content": "患者的", "progress": 50}
+
+data: {"status": "streaming", "stage": "response", "content": "病历资料...", "progress": 50}
+
+data: {"status": "completed", "message": "对话处理完成", "progress": 100, "duration": 5.67, "result": {"patient_id": "xxx", "conversation_id": "xxx", "response_length": 256, "files_processed": 0}}
+```
+
+**HTTP 状态码**:
+- `200`: 成功建立流式连接
+- `400`: 请求参数错误
+- `404`: 患者不存在
+- `500`: 服务器内部错误
+
+---
+
+### 3.2 获取患者聊天列表
+
+**接口**: `GET /api/patients/{patient_id}/chats`
+
+**功能说明**:
+- 获取指定患者的所有聊天列表
+- 按更新时间倒序排列
+
+**请求方式**: `GET`
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| patient_id | string | 是 | 患者ID |
+
+**查询参数**:
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| skip | int | 否 | 0 | 跳过记录数 |
+| limit | int | 否 | 50 | 返回记录数 |
+
+**请求示例**:
+
+```bash
+GET /api/patients/patient_uuid_xxx/chats?skip=0&limit=20
+```
+
+**响应示例**:
+
+```json
+{
+  "status": "success",
+  "patient_id": "patient_uuid_xxx",
+  "total": 3,
+  "chats": [
+    {
+      "id": "chat_uuid_001",
+      "session_id": "chat_xxx",
+      "title": "治疗方案咨询...",
+      "conversation_type": "chat",
+      "status": "active",
+      "created_at": "2025-01-15T10:30:00",
+      "updated_at": "2025-01-15T11:00:00",
+      "last_message_at": "2025-01-15T11:00:00"
+    },
+    {
+      "id": "chat_uuid_002",
+      "session_id": "chat_yyy",
+      "title": "药物副作用咨询",
+      "conversation_type": "chat",
+      "status": "active",
+      "created_at": "2025-01-14T14:00:00",
+      "updated_at": "2025-01-14T14:30:00",
+      "last_message_at": "2025-01-14T14:30:00"
+    }
+  ]
+}
+```
+
+**HTTP 状态码**:
+- `200`: 成功
+- `404`: 患者不存在
+
+---
+
+### 3.3 获取聊天消息记录
+
+**接口**: `GET /api/patients/{patient_id}/chats/{chat_id}/messages`
+
+**功能说明**:
+- 获取指定聊天的所有消息记录
+- 按消息序号正序排列
+
+**请求方式**: `GET`
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| patient_id | string | 是 | 患者ID |
+| chat_id | string | 是 | 聊天ID |
+
+**查询参数**:
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| skip | int | 否 | 0 | 跳过记录数 |
+| limit | int | 否 | 100 | 返回记录数 |
+
+**请求示例**:
+
+```bash
+GET /api/patients/patient_uuid_xxx/chats/chat_uuid_001/messages
+```
+
+**响应示例**:
+
+```json
+{
+  "status": "success",
+  "patient_id": "patient_uuid_xxx",
+  "chat_id": "chat_uuid_001",
+  "total": 4,
+  "messages": [
+    {
+      "id": "msg_id_001",
+      "message_id": "msg_xxx_001",
+      "role": "user",
+      "content": "这位患者的治疗方案有什么建议？",
+      "type": "text",
+      "agent_name": null,
+      "parent_id": null,
+      "sequence_number": 1,
+      "tool_outputs": [],
+      "status_data": {},
+      "created_at": "2025-01-15T10:30:00"
+    },
+    {
+      "id": "msg_id_002",
+      "message_id": "msg_xxx_002",
+      "role": "assistant",
+      "content": "根据患者的病历资料，我建议以下治疗方案...",
+      "type": "reply",
+      "agent_name": "medical_assistant",
+      "parent_id": "msg_xxx_001",
+      "sequence_number": 2,
+      "tool_outputs": [],
+      "status_data": {},
+      "created_at": "2025-01-15T10:30:15"
+    }
+  ]
+}
+```
+
+**HTTP 状态码**:
+- `200`: 成功
+- `404`: 患者或聊天不存在
+
+---
+
+### 3.4 查询对话任务状态
+
+**接口**: `GET /api/patients/chat_task_status/{task_id}`
+
+**功能说明**:
+- 查询对话任务的处理状态
+- 用于客户端断开后重新获取任务进度
+
+**请求方式**: `GET`
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| task_id | string | 是 | 任务ID（从对话接口返回的 task_id） |
+
+**请求示例**:
+
+```bash
+GET /api/patients/chat_task_status/task_uuid_xxx
+```
+
+**响应示例**:
+
+**处理中**:
+```json
+{
+  "status": "processing",
+  "progress": 50,
+  "message": "正在生成回复...",
+  "patient_id": "patient_uuid_xxx",
+  "conversation_id": "conv_uuid_xxx"
+}
+```
+
+**已完成**:
+```json
+{
+  "status": "completed",
+  "progress": 100,
+  "message": "对话处理完成",
+  "duration": 5.67,
+  "result": {
+    "patient_id": "patient_uuid_xxx",
+    "conversation_id": "conv_uuid_xxx",
+    "response_length": 256,
+    "files_processed": 0
+  }
+}
+```
+
+**HTTP 状态码**:
+- `200`: 成功获取任务状态
+- `404`: 任务不存在
+
+---
+
+### 3.5 删除聊天
+
+**接口**: `DELETE /api/patients/{patient_id}/chats/{chat_id}`
+
+**功能说明**:
+- 删除指定聊天及其所有消息记录
+
+**请求方式**: `DELETE`
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| patient_id | string | 是 | 患者ID |
+| chat_id | string | 是 | 聊天ID |
+
+**请求示例**:
+
+```bash
+DELETE /api/patients/patient_uuid_xxx/chats/chat_uuid_001
+```
+
+**响应示例**:
+
+```json
+{
+  "status": "success",
+  "message": "聊天已删除",
+  "chat_id": "chat_uuid_001"
+}
+```
+
+**HTTP 状态码**:
+- `200`: 成功删除
+- `404`: 患者或聊天不存在
+- `500`: 删除失败
+
+---
+
+## 4. 患者 PPT 生成接口
+
+### 4.1 生成患者 PPT
 
 **接口**: `POST /api/patients/{patient_id}/generate_ppt`
 
@@ -507,9 +829,56 @@ POST /api/patients/patient_uuid_xxx/generate_ppt
 
 ---
 
-## 4. 数据更新策略说明
+### 4.2 获取患者 PPT 数据
 
-### 4.1 通过chat接口更新患者数据
+**接口**: `GET /api/patients/{patient_id}/ppt_data`
+
+**功能说明**:
+- 获取患者的 PPT 相关数据
+- 用于查看 PPT 生成结果或检查数据完整性
+
+**请求方式**: `GET`
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| patient_id | string | 是 | 患者ID |
+
+**请求示例**:
+
+```bash
+GET /api/patients/patient_uuid_xxx/ppt_data
+```
+
+**响应示例**:
+
+```json
+{
+  "success": true,
+  "patient_id": "patient_uuid_xxx",
+  "patient_info": {
+    "name": "李云山",
+    "gender": "男",
+    "birth_date": "1965-03-15"
+  },
+  "ppt_data": {...},
+  "ppt_final": {
+    "ppt_url": "https://suvalue.com/ppt/xxx",
+    "generated_at": "2025-01-15T10:30:00"
+  }
+}
+```
+
+**HTTP 状态码**:
+- `200`: 成功
+- `404`: 患者或 PPT 数据不存在
+
+---
+
+## 5. 数据更新策略说明
+
+### 5.1 通过chat接口更新患者数据
 
 当使用 `POST /api/patients/{patient_id}/chat` 接口时，系统会自动更新患者的结构化数据。
 
@@ -613,9 +982,9 @@ POST /api/patients/patient_uuid_xxx/generate_ppt
 
 ---
 
-## 5. 数据库表结构说明
+## 6. 数据库表结构说明
 
-### 5.1 核心数据表
+### 6.1 核心数据表
 
 #### bus_patient（患者基本信息表）
 ```sql
@@ -693,9 +1062,9 @@ is_deleted BOOLEAN
 
 ---
 
-## 6. API 使用最佳实践
+## 7. API 使用最佳实践
 
-### 6.1 完整工作流程
+### 7.1 完整工作流程
 
 **首次创建患者**：
 ```bash
@@ -731,7 +1100,7 @@ curl http://localhost:9527/api/patients/{patient_id}/ppt_data
 curl -X POST http://localhost:9527/api/patients/{patient_id}/generate_ppt
 ```
 
-### 6.2 错误处理建议
+### 7.2 错误处理建议
 
 **超时处理**：
 ```javascript
@@ -784,7 +1153,7 @@ async function validatePatientData(patientId) {
 
 ---
 
-## 7. 联系与支持
+## 8. 联系与支持
 
 如有问题或建议，请联系开发团队。
 
