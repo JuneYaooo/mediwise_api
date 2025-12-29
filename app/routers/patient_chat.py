@@ -323,7 +323,11 @@ async def _process_update_data(
         
         if mdt_record:
             existing_patient_data["mdt_simple_report"] = mdt_record.structuredcontent or {}
-            logger.info(f"[对话任务 {task_id}] 查询到 mdt_report 数据，conversation_id={mdt_record.conversation_id}, 数据长度={len(str(mdt_record.structuredcontent))}")
+            logger.info(f"[对话任务 {task_id}] ✅ 查询到 mdt_report 数据，conversation_id={mdt_record.conversation_id}, 数据长度={len(str(mdt_record.structuredcontent))}")
+        else:
+            # 确保即使查询不到也设置为空字典
+            existing_patient_data["mdt_simple_report"] = {}
+            logger.warning(f"[对话任务 {task_id}] ⚠️ 未查询到 mdt_report 数据，已设置为空字典")
         
         # 使用线程池执行同步的 crew 方法
         loop = asyncio.get_event_loop()
@@ -339,19 +343,33 @@ async def _process_update_data(
             yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
             
             # 构建当前患者数据（包含 patient_content 以便 PatientInfoUpdateCrew 使用）
+            # 确保所有必需的键都存在，即使值为空
             current_patient_data = {
-                "patient_timeline": existing_patient_data.get("patient_timeline", {}),
-                "patient_journey": existing_patient_data.get("patient_journey", {}),
-                "mdt_simple_report": existing_patient_data.get("mdt_simple_report", {}),
-                "patient_content": existing_patient_data.get("patient_content", "")
+                "patient_timeline": existing_patient_data.get("patient_timeline") or {},
+                "patient_journey": existing_patient_data.get("patient_journey") or {},
+                "mdt_simple_report": existing_patient_data.get("mdt_simple_report") or {},
+                "patient_content": existing_patient_data.get("patient_content") or ""
             }
             
+            # 二次检查：确保所有值都不是 None
+            for key in ["patient_timeline", "patient_journey", "mdt_simple_report"]:
+                if current_patient_data[key] is None:
+                    current_patient_data[key] = {}
+                    logger.warning(f"[对话任务 {task_id}] {key} 为 None，已设置为空字典")
+            
+            if current_patient_data["patient_content"] is None:
+                current_patient_data["patient_content"] = ""
+                logger.warning(f"[对话任务 {task_id}] patient_content 为 None，已设置为空字符串")
+            
             # 记录数据结构用于调试
+            logger.info(f"[对话任务 {task_id}] ========== 数据传递检查 ==========")
+            logger.info(f"[对话任务 {task_id}] current_patient_data 的键: {list(current_patient_data.keys())}")
             logger.info(f"[对话任务 {task_id}] 当前患者数据结构:")
-            logger.info(f"  - patient_timeline: {'存在' if current_patient_data['patient_timeline'] else '为空'}")
-            logger.info(f"  - patient_journey: {'存在' if current_patient_data['patient_journey'] else '为空'}")
-            logger.info(f"  - mdt_simple_report: {'存在' if current_patient_data['mdt_simple_report'] else '为空'} (类型: {type(current_patient_data['mdt_simple_report']).__name__})")
-            logger.info(f"  - patient_content: 长度 {len(current_patient_data['patient_content'])}")
+            logger.info(f"  - patient_timeline: {'存在' if current_patient_data.get('patient_timeline') else '为空'} (类型: {type(current_patient_data.get('patient_timeline')).__name__})")
+            logger.info(f"  - patient_journey: {'存在' if current_patient_data.get('patient_journey') else '为空'} (类型: {type(current_patient_data.get('patient_journey')).__name__})")
+            logger.info(f"  - mdt_simple_report: {'存在' if current_patient_data.get('mdt_simple_report') else '为空'} (类型: {type(current_patient_data.get('mdt_simple_report')).__name__}, 长度: {len(str(current_patient_data.get('mdt_simple_report', {})))})")
+            logger.info(f"  - patient_content: 长度 {len(current_patient_data.get('patient_content', ''))}")
+            logger.info(f"[对话任务 {task_id}] ======================================")
             
             # 使用 task_async 方法执行更新
             result = await update_crew.task_async(
