@@ -24,6 +24,7 @@ import time
 # 配置
 API_BASE_URL = "http://182.254.240.153:9527" #"http://localhost:9527"
 CASE_DIR = "/home/ubuntu/data/patient_case/xuguoqiang/"
+TEST_TOKEN = "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJ1c2VyaWQiOiI3MSIsImxvZ2lubmFtZSI6InRlc3QiLCJyZWFsbmFtZSI6Iua1i-ivlei0puWPtyIsImRlcHRpZCI6IjkiLCJkZXB0Y29kZSI6ImdhZ2JkcTB3IiwiZGVwdG5hbWUiOiLpu5jorqTlsI_nu4QiLCJkZXB0cGF0aCI6Ii8xLzgvOS8iLCJkYXRhc2NvcGUiOiI0IiwiaXN0YWciOiIwIiwibG9naW50eXBlIjoi6LSm5Y-35a-G56CBIiwicmVmcmVzaHRva2VuIjoiYzhjMDkwNzVlMzBhNDcwOWI2YTQyZDljMTJmMmQ0ODgiLCJuYmYiOjE3NjY5ODIzOTAsImV4cCI6MTc2NzU4NzE5MCwiaWF0IjoxNzY2OTgyMzkwLCJpc3MiOiJzdXZhbHVlIiwiYXVkIjoibWR0LnN1dmFsdWUuY29tIn0.oTFULgLZRGxt0mGyBLGM2krUrPEFKOYGPzbo958MozgqVnxd_Hkvom580daDFnCX4IoXP7qHdMdbq34j7xArXg"
 
 
 def get_beijing_time():
@@ -343,6 +344,126 @@ def test_scenario_2_disconnect(files):
         return None
 
 
+def test_scenario_3_with_token(files):
+    """
+    场景3：使用Token认证的完整测试流程
+    """
+    print("=" * 80)
+    print("🔐 测试场景3：使用Token认证的请求")
+    print("=" * 80)
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {TEST_TOKEN}"
+    }
+
+    payload = {
+        "user_id": "71",  # 从token中解析的userid
+        "patient_description": "使用Token认证的测试患者数据",
+        "consultation_purpose": "验证Token认证功能",
+        "files": files
+    }
+
+    print(f"\n📤 发送带Token的请求... ({get_beijing_time()})")
+    print(f"📊 上传文件数: {len(files)}")
+    print(f"🔑 使用Token认证\n")
+
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/api/patient_data/process_patient_data_smart",
+            headers=headers,
+            json=payload,
+            stream=True,
+            timeout=1200
+        )
+
+        if response.status_code != 200:
+            print(f"❌ 请求失败 (状态码: {response.status_code}): {response.text}")
+            return None
+
+        print(f"✅ 认证成功，连接建立，开始接收流式响应...\n", flush=True)
+        print("-" * 80, flush=True)
+
+        task_id = None
+        event_count = 0
+
+        buffer = ""
+        for chunk in response.iter_content(chunk_size=1, decode_unicode=True):
+            if chunk:
+                buffer += chunk
+
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    line = line.strip()
+
+                    if line and line.startswith('data: '):
+                        event_count += 1
+                        timestamp = get_beijing_time()
+
+                        try:
+                            data = json.loads(line[6:])
+
+                            # 保存task_id
+                            if 'task_id' in data and not task_id:
+                                task_id = data['task_id']
+                                print(f"📋 任务ID: {task_id}\n", flush=True)
+
+                            stage = data.get('stage', '')
+                            message = data.get('message', '')
+                            progress = data.get('progress', 0)
+
+                            # 打印所有进度
+                            print(f"[{progress:3d}%] {timestamp} | {stage}: {message}", flush=True)
+
+                            # 任务完成
+                            if stage == 'completed':
+                                print(f"\n{'=' * 80}", flush=True)
+                                print(f"✅ 任务完成！", flush=True)
+                                print(f"{'=' * 80}\n", flush=True)
+                                response.close()
+                                break
+
+                        except json.JSONDecodeError as e:
+                            print(f"⚠️  JSON 解析错误: {e}", flush=True)
+
+                if stage == 'completed':
+                    break
+
+        print("-" * 80, flush=True)
+        print(f"\n📊 统计:", flush=True)
+        print(f"   - 总消息数: {event_count}", flush=True)
+
+        if task_id:
+            # 查询最终结果
+            print(f"\n🔍 查询任务最终状态...\n", flush=True)
+            status_response = requests.get(
+                f"{API_BASE_URL}/api/patient_data/task_status/{task_id}",
+                headers=headers  # 查询状态也使用token
+            )
+
+            if status_response.status_code == 200:
+                status_data = status_response.json()
+                print(f"✅ 任务状态查询成功:")
+                print(f"   - 状态: {status_data.get('status')}")
+                print(f"   - 进度: {status_data.get('progress')}%")
+                result = status_data.get('result', {})
+                if result:
+                    print(f"   - 患者ID: {result.get('patient_id', 'N/A')}")
+                    print(f"   - 会话ID: {result.get('conversation_id', 'N/A')}")
+                    print(f"   - 处理文件数: {result.get('uploaded_files_count', 0)}\n")
+                return task_id
+            else:
+                print(f"⚠️  状态查询失败: {status_response.text}\n")
+
+        return task_id
+
+    except Exception as e:
+        print(f"❌ 异常: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def main():
     """主测试流程"""
     print("\n" + "=" * 80)
@@ -350,20 +471,22 @@ def main():
     print("=" * 80)
     print(f"API 地址: {API_BASE_URL}")
     print(f"病例目录: {CASE_DIR}")
-    print(f"认证方式: 暂无需认证\n")
+    print(f"认证方式: 支持Token认证和无认证模式\n")
 
     print("💡 提示：")
     print("   场景1: 测试文件上传到云存储的进度实时反馈")
     print("   场景2: 测试客户端断开后台继续执行")
+    print("   场景3: 使用Token认证的完整测试流程")
     print()
 
     # 询问用户选择测试场景
     print("请选择测试场景：")
     print("  1 - 文件上传到云存储进度测试（验证实时进度反馈）")
     print("  2 - 断开重连测试（验证后台继续执行）")
-    print("  3 - 运行全部测试")
+    print("  3 - Token认证测试（验证Token认证功能）")
+    print("  4 - 运行全部测试")
 
-    choice = input("\n请输入选项 (1/2/3，默认2): ").strip() or "2"
+    choice = input("\n请输入选项 (1/2/3/4，默认3): ").strip() or "3"
 
     # 加载文件
     files = load_files_from_directory(max_files=5)
@@ -412,6 +535,13 @@ def main():
         result = test_scenario_2_disconnect(files)
 
     elif choice == "3":
+        # 场景3：Token认证测试
+        print("\n" + "=" * 80)
+        print("运行场景3：Token认证测试")
+        print("=" * 80 + "\n")
+        task_id = test_scenario_3_with_token(files)
+
+    elif choice == "4":
         # 运行全部测试
         print("\n" + "=" * 80)
         print("运行全部测试场景")
@@ -425,6 +555,11 @@ def main():
         # 场景2
         print("\n▶️  开始场景2...")
         result_2 = test_scenario_2_disconnect(files)
+        time.sleep(3)
+
+        # 场景3
+        print("\n▶️  开始场景3...")
+        task_id_3 = test_scenario_3_with_token(files)
 
     else:
         print(f"\n❌ 无效的选项: {choice}")

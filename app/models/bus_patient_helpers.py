@@ -5,7 +5,7 @@ import json
 import uuid
 from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.models.bus_models import (
     Patient,
@@ -119,6 +119,7 @@ class BusPatientHelper:
             can_share=can_share,
             granted_by=granted_by or user_id,
             granted_at=get_beijing_now_naive(),
+            expires_at=get_beijing_now_naive() + timedelta(days=36500),  # 默认100年后过期
             is_active=True,
             created_at=get_beijing_now_naive()
         )

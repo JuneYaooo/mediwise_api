@@ -3,11 +3,16 @@
 """
 from sqlalchemy import Boolean, Column, DateTime, String, Integer, BigInteger, ForeignKey, Text, JSON, TIMESTAMP
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 
 from app.db.database import Base
 from app.utils.datetime_utils import get_beijing_now_naive
+
+
+def get_default_expires_at():
+    """获取默认过期时间：100年后"""
+    return get_beijing_now_naive() + timedelta(days=36500)
 
 
 class Patient(Base):
@@ -196,7 +201,7 @@ class UserPatientAccess(Base):
     can_share = Column(Boolean, nullable=True, comment="是否可以分享患者数据")
     granted_by = Column(String(64), nullable=True, comment="授权人ID")
     granted_at = Column(TIMESTAMP, nullable=False, default=get_beijing_now_naive, comment="授权时间")
-    expires_at = Column(TIMESTAMP, nullable=True, comment="过期时间（NULL表示永不过期）")
+    expires_at = Column(TIMESTAMP, nullable=True, default=get_default_expires_at, comment="过期时间（默认100年后）")
     is_active = Column(Boolean, nullable=True, default=True, comment="是否激活")
     created_at = Column(TIMESTAMP, nullable=False, default=get_beijing_now_naive)
 
