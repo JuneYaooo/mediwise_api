@@ -75,19 +75,35 @@ class PatientInfoUpdateCrew():
                     logger.warning(f"未知的目标模块: {target_module}")
                     continue
                 
-                # 执行具体的修改操作
+                # 清理路径：如果路径以模块名开头，去除模块名前缀
+                # 例如: "mdt_simple_report[12].rows[0][3]" -> "[12].rows[0][3]"
+                logger.info(f"🔍 原始路径: {target_path}, 目标模块: {target_module}")
+                clean_path = target_path
+                if target_path.startswith(f"{target_module}."):
+                    clean_path = target_path[len(target_module) + 1:]  # +1 是为了去掉点号
+                    logger.info(f"✂️ 清理路径前缀（点号）: {target_path} -> {clean_path}")
+                elif target_path.startswith(f"{target_module}["):
+                    clean_path = target_path[len(target_module):]  # 保留 [ 号
+                    logger.info(f"✂️ 清理路径前缀（括号）: {target_path} -> {clean_path}")
+                else:
+                    logger.info(f"⚠️ 路径不需要清理: {target_path}")
+                
+                logger.info(f"📍 最终使用的路径: {clean_path}")
+                logger.info(f"📦 目标数据类型: {type(target_data).__name__}, 长度/键: {len(target_data) if isinstance(target_data, (list, dict)) else 'N/A'}")
+                
+                # 执行具体的修改操作（使用清理后的路径）
                 if action == "set":
                     # 直接设置字段值
-                    self._set_value_by_path(target_data, target_path, new_value)
+                    self._set_value_by_path(target_data, clean_path, new_value)
                     # 检查是否需要关联更新（如指标异常状态）
-                    self._check_and_update_related_fields(target_data, target_path, new_value)
+                    self._check_and_update_related_fields(target_data, clean_path, new_value)
                 elif action == "modify_text":
                     # 基于前导上下文的文本修改
-                    self._modify_text_by_path(target_data, target_path, new_value, 
+                    self._modify_text_by_path(target_data, clean_path, new_value, 
                                             leading_context, target_content, trailing_context)
                 elif action == "delete":
                     # 删除操作保留，用于删除整个条目
-                    self._delete_value_by_path(target_data, target_path)
+                    self._delete_value_by_path(target_data, clean_path)
                 else:
                     logger.warning(f"未知的操作类型: {action}，支持的操作类型: set, modify_text, delete")
                 
@@ -131,52 +147,263 @@ class PatientInfoUpdateCrew():
         """插入值，已废弃"""
         logger.warning("_insert_value方法已废弃")
     
-    def _set_value_by_path(self, target_data: Any, path: str, new_value: Any):
-        """通过路径设置值 - 核心方法"""
-        try:
-            parts = path.split('.')
-            current = target_data
-            
-            # 遍历到倒数第二层
-            for part in parts[:-1]:
-                if '[' in part and ']' in part:
-                    # 处理数组索引
-                    key = part.split('[')[0]
-                    index = int(part.split('[')[1].split(']')[0])
-                    if key not in current:
-                        logger.error(f"键 '{key}' 不存在于当前数据中")
-                        return
-                    if not isinstance(current[key], list) or index >= len(current[key]):
-                        logger.error(f"数组索引 {index} 超出范围或 '{key}' 不是数组")
-                        return
-                    current = current[key][index]
-                else:
-                    if part not in current:
-                        logger.error(f"键 '{part}' 不存在于当前数据中")
-                        return
-                    current = current[part]
-            
-            # 设置最后一层的值
-            final_key = parts[-1]
-            if '[' in final_key and ']' in final_key:
-                key = final_key.split('[')[0]
-                index = int(final_key.split('[')[1].split(']')[0])
-                if key not in current:
-                    logger.error(f"键 '{key}' 不存在于当前数据中")
-                    return
-                if not isinstance(current[key], list) or index >= len(current[key]):
-                    logger.error(f"数组索引 {index} 超出范围或 '{key}' 不是数组")
-                    return
-                current[key][index] = new_value
+    def _parse_path_to_tokens(self, path: str) -> List[str]:
+        """将路径解析为标准化的token列表
+
+        例如：
+        - "[12].rows[4][3]" -> ["[12]", "rows", "[4]", "[3]"]
+        - "key.array[0].field" -> ["key", "array", "[0]", "field"]
+        - "rows[4][3]" -> ["rows", "[4]", "[3]"]
+        """
+        tokens = []
+
+        # 先按点分割
+        parts = path.split('.')
+
+        for part in parts:
+            if not part:
+                continue
+
+            # 检查是否包含数组索引
+            if '[' not in part:
+                # 普通键
+                tokens.append(part)
             else:
-                current[final_key] = new_value
-                
+                # 包含数组索引，需要进一步解析
+                # 例如 "rows[4][3]" -> ["rows", "[4]", "[3]"]
+                # 例如 "[12]" -> ["[12]"]
+                current_pos = 0
+                while current_pos < len(part):
+                    bracket_start = part.find('[', current_pos)
+
+                    if bracket_start == -1:
+                        # 没有更多的括号
+                        if current_pos < len(part):
+                            remaining = part[current_pos:]
+                            if remaining:
+                                tokens.append(remaining)
+                        break
+
+                    # 先添加括号前的部分（如果有）
+                    if bracket_start > current_pos:
+                        prefix = part[current_pos:bracket_start]
+                        if prefix:
+                            tokens.append(prefix)
+
+                    # 找到对应的右括号
+                    bracket_end = part.find(']', bracket_start)
+                    if bracket_end == -1:
+                        logger.error(f"路径格式错误，缺少右括号: {part}")
+                        break
+
+                    # 添加数组索引 token（包括括号）
+                    index_token = part[bracket_start:bracket_end + 1]
+                    tokens.append(index_token)
+
+                    current_pos = bracket_end + 1
+
+        return tokens
+
+    def _set_value_by_path(self, target_data: Any, path: str, new_value: Any):
+        """通过路径设置值 - 核心方法
+
+        支持的路径格式：
+        - "key1.key2.key3": 嵌套字典访问
+        - "array[0]": 数组索引访问
+        - "[0].key": 从数组开始的路径
+        - "key.array[0].key2": 混合访问
+        - "rows[4][3]": 连续数组索引
+        """
+        try:
+            logger.info(f"🔧 _set_value_by_path 被调用")
+            logger.info(f"   - 路径: {path}")
+            logger.info(f"   - 新值: {new_value}")
+            logger.info(f"   - 数据类型: {type(target_data).__name__}")
+
+            # 使用新的路径解析方法
+            tokens = self._parse_path_to_tokens(path)
+            logger.info(f"   - 路径token: {tokens}")
+
+            if not tokens:
+                logger.error("路径解析结果为空")
+                return
+
+            current = target_data
+
+            # 遍历到倒数第二层
+            for token in tokens[:-1]:
+                current = self._navigate_by_token(current, token)
+                if current is None:
+                    return
+
+            # 设置最后一层的值
+            final_token = tokens[-1]
+            self._set_final_value_by_token(current, final_token, new_value)
+
             logger.info(f"✓ 成功设置路径 {path} 的值为: {new_value}")
-            
+
         except Exception as e:
             logger.error(f"通过路径设置值时出错 - 路径: {path}, 新值: {new_value}, 错误: {e}")
             import traceback
             logger.error(f"错误堆栈: {traceback.format_exc()}")
+
+    def _navigate_by_token(self, current: Any, token: str) -> Any:
+        """根据单个token导航
+
+        Args:
+            current: 当前数据节点
+            token: 路径token，例如 "key", "[0]"
+
+        Returns:
+            导航后的数据节点，失败返回 None
+        """
+        if token.startswith('[') and token.endswith(']'):
+            # 纯数组索引
+            try:
+                index = int(token[1:-1])
+            except ValueError:
+                logger.error(f"无效的数组索引: {token}")
+                return None
+
+            if not isinstance(current, list):
+                logger.error(f"期望数组但得到 {type(current).__name__}")
+                return None
+            if index >= len(current):
+                logger.error(f"数组索引 {index} 超出范围（长度: {len(current)}）")
+                return None
+            return current[index]
+        else:
+            # 普通键访问
+            if not isinstance(current, dict):
+                logger.error(f"期望字典但得到 {type(current).__name__}")
+                return None
+            if token not in current:
+                logger.error(f"键 '{token}' 不存在于当前数据中")
+                return None
+            return current[token]
+
+    def _set_final_value_by_token(self, current: Any, token: str, new_value: Any):
+        """根据单个token设置最终值
+
+        Args:
+            current: 当前数据节点
+            token: 路径token，例如 "key", "[0]"
+            new_value: 要设置的新值
+        """
+        if token.startswith('[') and token.endswith(']'):
+            # 纯数组索引
+            try:
+                index = int(token[1:-1])
+            except ValueError:
+                logger.error(f"无效的数组索引: {token}")
+                return
+
+            if not isinstance(current, list):
+                logger.error(f"期望数组但得到 {type(current).__name__}")
+                return
+            if index >= len(current):
+                logger.error(f"数组索引 {index} 超出范围（长度: {len(current)}）")
+                return
+            current[index] = new_value
+        else:
+            # 普通键赋值
+            if not isinstance(current, dict):
+                logger.error(f"期望字典但得到 {type(current).__name__}")
+                return
+            current[token] = new_value
+    
+    def _navigate_to_part(self, current: Any, part: str) -> Any:
+        """导航到路径的某个部分
+        
+        Args:
+            current: 当前数据节点
+            part: 路径部分，例如 "key", "array[0]", "[0]"
+            
+        Returns:
+            导航后的数据节点，失败返回 None
+        """
+        if '[' in part and ']' in part:
+            # 处理数组索引
+            key = part.split('[')[0]
+            index = int(part.split('[')[1].split(']')[0])
+            
+            if key == '':
+                # 纯数组索引，例如 "[0]"
+                if not isinstance(current, list):
+                    logger.error(f"期望数组但得到 {type(current).__name__}")
+                    return None
+                if index >= len(current):
+                    logger.error(f"数组索引 {index} 超出范围（长度: {len(current)}）")
+                    return None
+                return current[index]
+            else:
+                # 键名 + 数组索引，例如 "rows[0]"
+                if not isinstance(current, dict):
+                    logger.error(f"期望字典但得到 {type(current).__name__}")
+                    return None
+                if key not in current:
+                    logger.error(f"键 '{key}' 不存在于当前数据中")
+                    return None
+                if not isinstance(current[key], list):
+                    logger.error(f"'{key}' 不是数组")
+                    return None
+                if index >= len(current[key]):
+                    logger.error(f"数组 '{key}' 的索引 {index} 超出范围（长度: {len(current[key])}）")
+                    return None
+                return current[key][index]
+        else:
+            # 普通键访问
+            if not isinstance(current, dict):
+                logger.error(f"期望字典但得到 {type(current).__name__}")
+                return None
+            if part not in current:
+                logger.error(f"键 '{part}' 不存在于当前数据中")
+                return None
+            return current[part]
+    
+    def _set_final_value(self, current: Any, final_part: str, new_value: Any):
+        """设置最终值
+        
+        Args:
+            current: 当前数据节点
+            final_part: 最后一个路径部分
+            new_value: 要设置的新值
+        """
+        if '[' in final_part and ']' in final_part:
+            # 处理数组索引
+            key = final_part.split('[')[0]
+            index = int(final_part.split('[')[1].split(']')[0])
+            
+            if key == '':
+                # 纯数组索引，例如 "[3]"
+                if not isinstance(current, list):
+                    logger.error(f"期望数组但得到 {type(current).__name__}")
+                    return
+                if index >= len(current):
+                    logger.error(f"数组索引 {index} 超出范围（长度: {len(current)}）")
+                    return
+                current[index] = new_value
+            else:
+                # 键名 + 数组索引，例如 "items[0]"
+                if not isinstance(current, dict):
+                    logger.error(f"期望字典但得到 {type(current).__name__}")
+                    return
+                if key not in current:
+                    logger.error(f"键 '{key}' 不存在于当前数据中")
+                    return
+                if not isinstance(current[key], list):
+                    logger.error(f"'{key}' 不是数组")
+                    return
+                if index >= len(current[key]):
+                    logger.error(f"数组 '{key}' 的索引 {index} 超出范围（长度: {len(current[key])}）")
+                    return
+                current[key][index] = new_value
+        else:
+            # 普通键赋值
+            if not isinstance(current, dict):
+                logger.error(f"期望字典但得到 {type(current).__name__}")
+                return
+            current[final_part] = new_value
     
     def _delete_value_by_path(self, target_data: Any, path: str):
         """通过路径删除值 - 核心方法"""
