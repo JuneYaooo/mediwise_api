@@ -243,6 +243,140 @@ class BusPatientHelper:
         return structured_data_records
 
     @staticmethod
+    def update_structured_data(
+        db: Session,
+        patient_id: str,
+        patient_timeline: Optional[Dict[str, Any]] = None,
+        patient_journey: Optional[Dict[str, Any]] = None,
+        mdt_simple_report: Optional[Dict[str, Any]] = None,
+        patient_full_content: Optional[str] = None,
+        user_id: Optional[str] = None
+    ) -> Dict[str, PatientStructuredData]:
+        """更新患者的结构化数据（如果不存在则创建）
+        
+        Args:
+            db: 数据库会话
+            patient_id: 患者ID
+            patient_timeline: 患者时间轴数据
+            patient_journey: 患者就诊历程数据
+            mdt_simple_report: MDT简化报告数据
+            patient_full_content: 患者完整内容文本
+            user_id: 更新用户ID
+            
+        Returns:
+            Dict[str, PatientStructuredData]: 包含更新后的记录，键为 data_type
+        """
+        updated_records = {}
+        
+        # 1. 更新或创建 timeline
+        if patient_timeline is not None:
+            timeline_record = db.query(PatientStructuredData).filter(
+                PatientStructuredData.patient_id == patient_id,
+                PatientStructuredData.data_type == "timeline",
+                PatientStructuredData.is_deleted == False
+            ).order_by(PatientStructuredData.created_at.desc()).first()
+            
+            if timeline_record:
+                # 更新现有记录
+                timeline_record.structuredcontent = patient_timeline
+                if patient_full_content:
+                    timeline_record.text_content = patient_full_content
+                timeline_record.updated_at = get_beijing_now_naive()
+                timeline_record.updated_by = user_id
+                logger.info(f"更新患者时间轴数据: {timeline_record.id}")
+            else:
+                # 创建新记录
+                timeline_record = PatientStructuredData(
+                    id=str(uuid.uuid4()),
+                    patient_id=patient_id,
+                    data_type="timeline",
+                    data_category="patient_timeline",
+                    title="患者时间轴",
+                    structuredcontent=patient_timeline,
+                    text_content=patient_full_content,
+                    version=1,
+                    created_by=user_id,
+                    created_at=get_beijing_now_naive(),
+                    updated_at=get_beijing_now_naive(),
+                    is_deleted=False
+                )
+                db.add(timeline_record)
+                logger.info(f"创建患者时间轴数据: {timeline_record.id}")
+            
+            updated_records["timeline"] = timeline_record
+        
+        # 2. 更新或创建 journey
+        if patient_journey is not None:
+            journey_record = db.query(PatientStructuredData).filter(
+                PatientStructuredData.patient_id == patient_id,
+                PatientStructuredData.data_type == "journey",
+                PatientStructuredData.is_deleted == False
+            ).order_by(PatientStructuredData.created_at.desc()).first()
+            
+            if journey_record:
+                # 更新现有记录
+                journey_record.structuredcontent = patient_journey
+                journey_record.updated_at = get_beijing_now_naive()
+                journey_record.updated_by = user_id
+                logger.info(f"更新患者就诊历程数据: {journey_record.id}")
+            else:
+                # 创建新记录
+                journey_record = PatientStructuredData(
+                    id=str(uuid.uuid4()),
+                    patient_id=patient_id,
+                    data_type="journey",
+                    data_category="patient_journey",
+                    title="患者就诊历程",
+                    structuredcontent=patient_journey,
+                    version=1,
+                    created_by=user_id,
+                    created_at=get_beijing_now_naive(),
+                    updated_at=get_beijing_now_naive(),
+                    is_deleted=False
+                )
+                db.add(journey_record)
+                logger.info(f"创建患者就诊历程数据: {journey_record.id}")
+            
+            updated_records["journey"] = journey_record
+        
+        # 3. 更新或创建 mdt_report
+        if mdt_simple_report is not None:
+            mdt_record = db.query(PatientStructuredData).filter(
+                PatientStructuredData.patient_id == patient_id,
+                PatientStructuredData.data_type == "mdt_report",
+                PatientStructuredData.is_deleted == False
+            ).order_by(PatientStructuredData.created_at.desc()).first()
+            
+            if mdt_record:
+                # 更新现有记录
+                mdt_record.structuredcontent = mdt_simple_report
+                mdt_record.updated_at = get_beijing_now_naive()
+                mdt_record.updated_by = user_id
+                logger.info(f"更新MDT简化报告数据: {mdt_record.id}")
+            else:
+                # 创建新记录
+                mdt_record = PatientStructuredData(
+                    id=str(uuid.uuid4()),
+                    patient_id=patient_id,
+                    data_type="mdt_report",
+                    data_category="mdt_simple_report",
+                    title="MDT简化报告",
+                    structuredcontent=mdt_simple_report,
+                    version=1,
+                    created_by=user_id,
+                    created_at=get_beijing_now_naive(),
+                    updated_at=get_beijing_now_naive(),
+                    is_deleted=False
+                )
+                db.add(mdt_record)
+                logger.info(f"创建MDT简化报告数据: {mdt_record.id}")
+            
+            updated_records["mdt_report"] = mdt_record
+        
+        db.flush()
+        return updated_records
+
+    @staticmethod
     def save_ppt_data(
         db: Session,
         patient_id: str,

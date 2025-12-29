@@ -280,19 +280,50 @@ async def _process_update_data(
     yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
     
     try:
-        # 获取现有患者数据
+        # 获取现有患者数据 - 直接按 patient_id 查询所有类型的数据
         existing_patient_data = {
-            "patient_timeline": patient_context.get("patient_timeline") or {},
+            "patient_timeline": {},
             "patient_journey": {},
-            "mdt_simple_report": {}
+            "mdt_simple_report": {},
+            "patient_content": ""
         }
         
-        # 获取更完整的现有数据
-        patient_detail = PatientDetailHelper.get_latest_patient_detail_by_patient_id(db, patient_id)
-        if patient_detail:
-            existing_patient_data["patient_journey"] = PatientDetailHelper.get_patient_journey(patient_detail) or {}
-            existing_patient_data["mdt_simple_report"] = PatientDetailHelper.get_mdt_simple_report(patient_detail) or {}
-            existing_patient_data["patient_content"] = PatientDetailHelper.get_patient_full_content(patient_detail) or ""
+        # 查询该患者的所有结构化数据（按 data_type 分别查询最新记录）
+        from app.models.bus_models import PatientStructuredData
+        
+        # 1. 查询 timeline
+        timeline_record = db.query(PatientStructuredData).filter(
+            PatientStructuredData.patient_id == patient_id,
+            PatientStructuredData.data_type == "timeline",
+            PatientStructuredData.is_deleted == False
+        ).order_by(PatientStructuredData.created_at.desc()).first()
+        
+        if timeline_record:
+            existing_patient_data["patient_timeline"] = timeline_record.structuredcontent or {}
+            existing_patient_data["patient_content"] = timeline_record.text_content or ""
+            logger.info(f"[对话任务 {task_id}] 查询到 timeline 数据，conversation_id={timeline_record.conversation_id}")
+        
+        # 2. 查询 journey
+        journey_record = db.query(PatientStructuredData).filter(
+            PatientStructuredData.patient_id == patient_id,
+            PatientStructuredData.data_type == "journey",
+            PatientStructuredData.is_deleted == False
+        ).order_by(PatientStructuredData.created_at.desc()).first()
+        
+        if journey_record:
+            existing_patient_data["patient_journey"] = journey_record.structuredcontent or {}
+            logger.info(f"[对话任务 {task_id}] 查询到 journey 数据，conversation_id={journey_record.conversation_id}")
+        
+        # 3. 查询 mdt_report
+        mdt_record = db.query(PatientStructuredData).filter(
+            PatientStructuredData.patient_id == patient_id,
+            PatientStructuredData.data_type == "mdt_report",
+            PatientStructuredData.is_deleted == False
+        ).order_by(PatientStructuredData.created_at.desc()).first()
+        
+        if mdt_record:
+            existing_patient_data["mdt_simple_report"] = mdt_record.structuredcontent or {}
+            logger.info(f"[对话任务 {task_id}] 查询到 mdt_report 数据，conversation_id={mdt_record.conversation_id}, 数据长度={len(str(mdt_record.structuredcontent))}")
         
         # 使用线程池执行同步的 crew 方法
         loop = asyncio.get_event_loop()
@@ -314,6 +345,13 @@ async def _process_update_data(
                 "mdt_simple_report": existing_patient_data.get("mdt_simple_report", {}),
                 "patient_content": existing_patient_data.get("patient_content", "")
             }
+            
+            # 记录数据结构用于调试
+            logger.info(f"[对话任务 {task_id}] 当前患者数据结构:")
+            logger.info(f"  - patient_timeline: {'存在' if current_patient_data['patient_timeline'] else '为空'}")
+            logger.info(f"  - patient_journey: {'存在' if current_patient_data['patient_journey'] else '为空'}")
+            logger.info(f"  - mdt_simple_report: {'存在' if current_patient_data['mdt_simple_report'] else '为空'} (类型: {type(current_patient_data['mdt_simple_report']).__name__})")
+            logger.info(f"  - patient_content: 长度 {len(current_patient_data['patient_content'])}")
             
             # 使用 task_async 方法执行更新
             result = await update_crew.task_async(
@@ -354,25 +392,25 @@ async def _process_update_data(
         progress_msg = {'status': 'processing', 'stage': 'data_extracted', 'message': '数据处理完成，正在保存...', 'progress': 80}
         yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
         
-        # 保存结构化数据到数据库
+        # 保存/更新结构化数据到数据库
         patient_timeline = result.get('full_structure_data', {})
         patient_journey = result.get('patient_journey', {})
         mdt_simple_report = result.get('mdt_simple_report', {})
         patient_content = result.get('patient_content', '')
         
-        BusPatientHelper.save_structured_data(
+        # 使用 update_structured_data 方法，它会更新现有记录而不是创建新记录
+        updated_records = BusPatientHelper.update_structured_data(
             db=db,
             patient_id=patient_id,
-            conversation_id=conversation_id,
-            user_id=user_id,
             patient_timeline=patient_timeline,
             patient_journey=patient_journey,
             mdt_simple_report=mdt_simple_report,
-            patient_full_content=patient_content
+            patient_full_content=patient_content,
+            user_id=user_id
         )
         db.commit()
         
-        logger.info(f"[对话任务 {task_id}] 结构化数据已保存到 bus_patient_structured_data")
+        logger.info(f"[对话任务 {task_id}] 结构化数据已更新到 bus_patient_structured_data，更新了 {len(updated_records)} 个数据类型")
         
         progress_msg = {'status': 'processing', 'stage': 'data_saved', 'message': '患者数据已更新，正在生成确认消息...', 'progress': 90}
         yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
