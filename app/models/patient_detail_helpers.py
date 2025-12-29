@@ -156,11 +156,20 @@ class PatientDetailHelper:
 
         from sqlalchemy.orm import Session
         db = Session.object_session(patient_detail)
+        # 先尝试从同一会话查询，如果找不到则查询该患者的最新数据
         journey = db.query(PatientStructuredData).filter(
             PatientStructuredData.conversation_id == patient_detail.conversation_id,
             PatientStructuredData.data_type == "journey",
             PatientStructuredData.is_deleted == False
         ).first()
+
+        if not journey:
+            # 如果同一会话中没有，则查询该患者的最新 journey 数据
+            journey = db.query(PatientStructuredData).filter(
+                PatientStructuredData.patient_id == patient_detail.patient_id,
+                PatientStructuredData.data_type == "journey",
+                PatientStructuredData.is_deleted == False
+            ).order_by(PatientStructuredData.created_at.desc()).first()
 
         return journey.structuredcontent if journey else None
 
@@ -172,11 +181,20 @@ class PatientDetailHelper:
 
         from sqlalchemy.orm import Session
         db = Session.object_session(patient_detail)
+        # 先尝试从同一会话查询，如果找不到则查询该患者的最新数据
         mdt_report = db.query(PatientStructuredData).filter(
             PatientStructuredData.conversation_id == patient_detail.conversation_id,
             PatientStructuredData.data_type == "mdt_report",
             PatientStructuredData.is_deleted == False
         ).first()
+
+        if not mdt_report:
+            # 如果同一会话中没有，则查询该患者的最新 mdt_report 数据
+            mdt_report = db.query(PatientStructuredData).filter(
+                PatientStructuredData.patient_id == patient_detail.patient_id,
+                PatientStructuredData.data_type == "mdt_report",
+                PatientStructuredData.is_deleted == False
+            ).order_by(PatientStructuredData.created_at.desc()).first()
 
         return mdt_report.structuredcontent if mdt_report else None
 

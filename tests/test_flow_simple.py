@@ -386,6 +386,7 @@ def test_scenario_3_with_token(files):
 
         task_id = None
         event_count = 0
+        completed = False
 
         buffer = ""
         for chunk in response.iter_content(chunk_size=1, decode_unicode=True):
@@ -420,13 +421,14 @@ def test_scenario_3_with_token(files):
                                 print(f"\n{'=' * 80}", flush=True)
                                 print(f"✅ 任务完成！", flush=True)
                                 print(f"{'=' * 80}\n", flush=True)
+                                completed = True
                                 response.close()
                                 break
 
                         except json.JSONDecodeError as e:
                             print(f"⚠️  JSON 解析错误: {e}", flush=True)
 
-                if stage == 'completed':
+                if completed:
                     break
 
         print("-" * 80, flush=True)

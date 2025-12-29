@@ -765,21 +765,33 @@ async def chat_with_patient(
         user_id = "system_user"
         
         # 5. 获取或创建会话
+        # 生成会话标题（如果没有文本消息但有文件，使用文件信息）
+        conversation_title = None
+        if message:
+            conversation_title = message[:30] + "..." if len(message) > 30 else message
+        elif files:
+            conversation_title = f"上传了 {len(files)} 个文件"
+
         conversation = get_or_create_conversation(
             db=db,
             patient_id=patient_id,
             user_id=user_id,
             conversation_id=conversation_id,
-            title=message[:30] + "..." if message and len(message) > 30 else message
+            title=conversation_title
         )
         conversation_id = conversation.id
         
         # 6. 保存用户消息
+        # 如果没有文本消息但有文件，生成默认消息
+        user_message_content = message
+        if not message and files:
+            user_message_content = f"[上传了 {len(files)} 个文件]"
+
         user_msg = save_message(
             db=db,
             conversation_id=conversation_id,
             role="user",
-            content=message,
+            content=user_message_content,
             message_type="text"
         )
         db.commit()
