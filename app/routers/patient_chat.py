@@ -163,20 +163,7 @@ async def stream_chat_processing(
         modify_type = intent_result.get("modify_type")
         
         logger.info(f"[对话任务 {task_id}] 意图识别结果: intent={intent}, confidence={intent_confidence}, reason={intent_reason}, modify_type={modify_type}")
-        
-        progress_msg = {
-            'status': 'processing', 
-            'stage': 'intent_detected', 
-            'message': f'意图识别: {intent} (置信度: {intent_confidence:.0%})', 
-            'intent': intent,
-            'intent_reason': intent_reason,
-            'intent_confidence': intent_confidence,
-            'user_requirement': user_requirement,
-            'progress': 28
-        }
-        yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
-        await asyncio.sleep(0)
-        
+
         # ========== 根据意图分支处理 ==========
         if intent in ["update_data", "modify_data"]:
             # 更新/修改患者数据分支 - 调用 PatientDataCrew
