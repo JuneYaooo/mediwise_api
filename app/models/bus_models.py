@@ -183,6 +183,27 @@ class PatientFile(Base):
     patient = relationship("Patient", back_populates="files")
 
 
+class UserPatientAccess(Base):
+    """用户患者访问权限表 - 映射到 bus_user_patient_access"""
+    __tablename__ = "bus_user_patient_access"
+
+    id = Column(String(64), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(64), nullable=False, index=True)
+    patient_id = Column(String(64), ForeignKey("bus_patient.patient_id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(50), nullable=True, comment="角色：owner(所有者)、editor(编辑者)、viewer(查看者)")
+    can_edit = Column(Boolean, nullable=True, comment="是否可以编辑患者数据")
+    can_delete = Column(Boolean, nullable=True, comment="是否可以删除患者数据")
+    can_share = Column(Boolean, nullable=True, comment="是否可以分享患者数据")
+    granted_by = Column(String(64), nullable=True, comment="授权人ID")
+    granted_at = Column(TIMESTAMP, nullable=False, default=get_beijing_now_naive, comment="授权时间")
+    expires_at = Column(TIMESTAMP, nullable=True, comment="过期时间（NULL表示永不过期）")
+    is_active = Column(Boolean, nullable=True, default=True, comment="是否激活")
+    created_at = Column(TIMESTAMP, nullable=False, default=get_beijing_now_naive)
+
+    # Relationships
+    patient = relationship("Patient")
+
+
 class SysUser(Base):
     """系统用户表 - 映射到 sys_user"""
     __tablename__ = "sys_user"

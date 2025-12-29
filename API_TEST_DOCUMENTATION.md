@@ -112,6 +112,7 @@ curl http://localhost:9527/health
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
+| user_id | string | 是 | 用户ID，用于标识创建患者的用户 |
 | patient_description | string | 否 | 患者说明文本，描述患者基本情况 |
 | consultation_purpose | string | 否 | 会诊目的，说明本次处理的目标 |
 | files | array | 否 | 文件列表 |
@@ -119,14 +120,16 @@ curl http://localhost:9527/health
 | files[].file_content | string | 是 | 文件内容（Base64 编码） |
 
 **注意**:
+- `user_id` 为必填参数
 - `patient_description` 和 `files` 至少需要提供一个
-- 此接口仅用于创建新患者
+- 此接口仅用于创建新患者，创建后会自动为 `user_id` 授予该患者的查看和编辑权限
 - 如需更新现有患者数据，请使用 `POST /api/patients/{patient_id}/chat` 接口
 
 **请求示例**:
 
 ```json
 {
+  "user_id": "user_12345",
   "patient_description": "患者李云山的完整病例资料，包含多次检查报告和影像资料",
   "consultation_purpose": "多学科会诊，制定综合治疗方案，评估预后情况",
   "files": [

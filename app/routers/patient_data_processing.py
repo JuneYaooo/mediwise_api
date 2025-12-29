@@ -120,6 +120,19 @@ def process_patient_data_background_from_task(task_id: str):
             patient_timeline_str = ""
             logger.info(f"[后台任务 {task_id}] 创建新患者 {patient.patient_id}")
 
+            # 创建用户患者访问权限（上传用户自动授权查看和修改）
+            BusPatientHelper.create_user_patient_access(
+                db=db,
+                user_id=user_id,
+                patient_id=patient.patient_id,
+                role="editor",
+                can_edit=True,
+                can_delete=False,
+                can_share=False,
+                granted_by=user_id
+            )
+            logger.info(f"[后台任务 {task_id}] 创建用户患者访问权限: user_id={user_id}, patient_id={patient.patient_id}")
+
             # 创建会话记录
             session_id = f"patient_{task_id}"
             title_desc = patient_description[:50] if patient_description else "首次数据处理"
@@ -389,6 +402,19 @@ async def smart_stream_patient_data_processing(
         )
         patient_timeline_str = ""
         logger.info(f"[首次处理任务 {task_id}] 创建新患者 {patient.patient_id}")
+
+        # 创建用户患者访问权限（上传用户自动授权查看和修改）
+        BusPatientHelper.create_user_patient_access(
+            db=db,
+            user_id=user_id,
+            patient_id=patient.patient_id,
+            role="editor",
+            can_edit=True,
+            can_delete=False,
+            can_share=False,
+            granted_by=user_id
+        )
+        logger.info(f"[首次处理任务 {task_id}] 创建用户患者访问权限: user_id={user_id}, patient_id={patient.patient_id}")
 
         # 创建会话记录
         session_id = f"patient_{task_id}"
@@ -733,6 +759,7 @@ async def process_patient_data_smart(
     - 支持客户端断开后后台继续执行
 
     请求参数:
+        - user_id: 用户ID（必需）
         - patient_description: 患者说明文本（可选）
         - consultation_purpose: 会诊目的（可选）
         - files: 文件列表（可选，每个文件需包含file_name、file_content(base64)）
@@ -747,9 +774,17 @@ async def process_patient_data_smart(
     """
     try:
         # 获取用户输入
+        user_id = request.get("user_id", "").strip()
         patient_description = request.get("patient_description", "")
         consultation_purpose = request.get("consultation_purpose", "")
         files = request.get("files", [])
+
+        # 验证 user_id
+        if not user_id:
+            raise HTTPException(
+                status_code=400,
+                detail="user_id 不能为空",
+            )
 
         # 验证输入：至少 patient_description 或 files 有一个必须有值
         if not patient_description and not files:
@@ -760,9 +795,6 @@ async def process_patient_data_smart(
 
         # 生成任务ID
         task_id = str(uuid.uuid4())
-
-        # 使用固定用户ID（暂无认证）
-        user_id = "system_user"
 
         # 初始化任务状态
         task_status_store[task_id] = {

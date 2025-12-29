@@ -12,7 +12,8 @@ from app.models.bus_models import (
     PatientConversation,
     ConversationMessage,
     PatientStructuredData,
-    PatientFile
+    PatientFile,
+    UserPatientAccess
 )
 from app.utils.datetime_utils import get_beijing_now_naive
 from src.utils.logger import BeijingLogger
@@ -62,6 +63,71 @@ class BusPatientHelper:
 
         logger.info(f"创建患者记录: {patient.patient_id} - {name}, 文件数: {len(raw_file_ids) if raw_file_ids else 0}")
         return patient
+
+    @staticmethod
+    def create_user_patient_access(
+        db: Session,
+        user_id: str,
+        patient_id: str,
+        role: str = "editor",
+        can_edit: bool = True,
+        can_delete: bool = False,
+        can_share: bool = False,
+        granted_by: Optional[str] = None
+    ) -> UserPatientAccess:
+        """
+        创建用户患者访问权限记录
+
+        Args:
+            db: 数据库会话
+            user_id: 用户ID
+            patient_id: 患者ID
+            role: 角色 (owner: 所有者, editor: 编辑者, viewer: 查看者)
+            can_edit: 是否可以编辑
+            can_delete: 是否可以删除
+            can_share: 是否可以分享
+            granted_by: 授权人ID，如果为None则使用user_id
+
+        Returns:
+            UserPatientAccess: 访问权限记录
+        """
+        # 检查是否已存在权限记录
+        existing_access = db.query(UserPatientAccess).filter(
+            UserPatientAccess.user_id == user_id,
+            UserPatientAccess.patient_id == patient_id,
+            UserPatientAccess.is_active == True
+        ).first()
+
+        if existing_access:
+            # 如果已存在，更新权限
+            existing_access.role = role
+            existing_access.can_edit = can_edit
+            existing_access.can_delete = can_delete
+            existing_access.can_share = can_share
+            db.flush()
+            logger.info(f"更新用户患者访问权限: user_id={user_id}, patient_id={patient_id}, role={role}")
+            return existing_access
+
+        # 创建新的权限记录
+        access_record = UserPatientAccess(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            patient_id=patient_id,
+            role=role,
+            can_edit=can_edit,
+            can_delete=can_delete,
+            can_share=can_share,
+            granted_by=granted_by or user_id,
+            granted_at=get_beijing_now_naive(),
+            is_active=True,
+            created_at=get_beijing_now_naive()
+        )
+
+        db.add(access_record)
+        db.flush()
+
+        logger.info(f"创建用户患者访问权限: user_id={user_id}, patient_id={patient_id}, role={role}")
+        return access_record
 
     @staticmethod
     def create_conversation(
