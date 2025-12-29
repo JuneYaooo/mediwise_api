@@ -650,7 +650,7 @@ class FileContentExtractor:
             ai_start_time = time.time()
             if extraction_results:
                 logger.info("-" * 80)
-                logger.info(f"【阶段3】开始AI文件类型批量判断（并发数: 20）")
+                logger.info(f"【阶段3】开始AI文件类型批量判断（并发数: {int(os.getenv('MULTIMODAL_IMAGE_CONCURRENT_WORKERS', '20'))}）")
                 logger.info("-" * 80)
 
                 # 🚨 优化：所有文件（包括zip子文件）都统一批量AI判断
@@ -659,8 +659,8 @@ class FileContentExtractor:
                 logger.info(f"  需要AI判断的文件总数: {len(files_need_ai)} 个")
 
                 if files_need_ai:
-                    # 使用20并发处理AI判断
-                    ai_max_workers = 20
+                    # 使用环境变量配置的并发数处理AI判断
+                    ai_max_workers = int(os.getenv("MULTIMODAL_IMAGE_CONCURRENT_WORKERS", "20"))
                     with ThreadPoolExecutor(max_workers=ai_max_workers) as ai_executor:
                         ai_futures = {
                             ai_executor.submit(self._determine_file_type, result['file_name'], result['file_content']): result
@@ -697,7 +697,8 @@ class FileContentExtractor:
                 if files_need_ai:
                     avg_ai_time = ai_duration / len(files_need_ai)
                     logger.info(f"  单个文件平均AI判断时间: {avg_ai_time:.2f} 秒")
-                    logger.info(f"  并发效率提升: 约 {max_workers / ai_max_workers * 100:.0f}% -> 100% (使用20并发)")
+                    concurrent_workers = int(os.getenv("MULTIMODAL_IMAGE_CONCURRENT_WORKERS", "20"))
+                    logger.info(f"  并发效率提升: 约 {max_workers / concurrent_workers * 100:.0f}% -> 100% (使用{concurrent_workers}并发)")
                 logger.info("-" * 80)
 
         # ========== 总体统计 ==========

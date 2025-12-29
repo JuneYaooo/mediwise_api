@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Header
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import json
 import time
 from datetime import datetime
@@ -12,6 +12,7 @@ import asyncio
 from app.db.database import get_db
 from app.core.deps import get_current_user
 from app.models.user import User as UserModel
+from app.core.security import decode_external_token
 from src.utils.logger import BeijingLogger
 
 # 初始化 logger
@@ -125,13 +126,13 @@ def process_patient_data_background_from_task(task_id: str):
                 db=db,
                 user_id=user_id,
                 patient_id=patient.patient_id,
-                role="editor",
+                role="owner",
                 can_edit=True,
                 can_delete=False,
                 can_share=False,
                 granted_by=user_id
             )
-            logger.info(f"[后台任务 {task_id}] 创建用户患者访问权限: user_id={user_id}, patient_id={patient.patient_id}")
+            logger.info(f"[后台任务 {task_id}] 创建用户患者访问权限: user_id={user_id}, patient_id={patient.patient_id}, role=owner")
 
             # 创建会话记录
             session_id = f"patient_{task_id}"
@@ -408,13 +409,13 @@ async def smart_stream_patient_data_processing(
             db=db,
             user_id=user_id,
             patient_id=patient.patient_id,
-            role="editor",
+            role="owner",
             can_edit=True,
             can_delete=False,
             can_share=False,
             granted_by=user_id
         )
-        logger.info(f"[首次处理任务 {task_id}] 创建用户患者访问权限: user_id={user_id}, patient_id={patient.patient_id}")
+        logger.info(f"[首次处理任务 {task_id}] 创建用户患者访问权限: user_id={user_id}, patient_id={patient.patient_id}, role=owner")
 
         # 创建会话记录
         session_id = f"patient_{task_id}"
@@ -747,6 +748,7 @@ async def process_patient_data_smart(
     request: Dict[str, Any],
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None)
 ) -> Any:
     """
     患者首次数据处理接口：用于创建新患者并处理其病历数据
@@ -759,11 +761,16 @@ async def process_patient_data_smart(
     - 支持客户端断开后后台继续执行
 
     请求参数:
-        - user_id: 用户ID（必需）
+        - user_id: 用户ID（可选，优先从 token 中获取）
         - patient_description: 患者说明文本（可选）
         - consultation_purpose: 会诊目的（可选）
         - files: 文件列表（可选，每个文件需包含file_name、file_content(base64)）
         - 注意：patient_description 和 files 至少需要提供一个
+
+    认证方式：
+        - 优先使用 Authorization header 中的 JWT token
+        - 如果没有 token，使用请求体中的 user_id
+        - 两者都没有则返回错误
 
     返回:
         流式响应（Server-Sent Events格式），第一条消息包含task_id
@@ -773,18 +780,36 @@ async def process_patient_data_smart(
         - 如需更新现有患者数据，请使用 POST /api/patients/{patient_id}/chat 接口
     """
     try:
-        # 获取用户输入
-        user_id = request.get("user_id", "").strip()
-        patient_description = request.get("patient_description", "")
-        consultation_purpose = request.get("consultation_purpose", "")
-        files = request.get("files", [])
+        # 1. 获取 user_id（优先从 token，其次从请求体）
+        user_id = None
+
+        # 尝试从 Authorization header 中解析 token
+        if authorization:
+            # 支持 "Bearer <token>" 和直接 "<token>" 两种格式
+            token = authorization.replace("Bearer ", "").strip()
+            if token:
+                token_data = decode_external_token(token)
+                if token_data:
+                    user_id = token_data.get("user_id")
+                    logger.info(f"从 token 中解析出 user_id: {user_id}")
+
+        # 如果 token 中没有获取到 user_id，尝试从请求体获取
+        if not user_id:
+            user_id = request.get("user_id", "").strip()
+            if user_id:
+                logger.info(f"从请求体中获取 user_id: {user_id}")
 
         # 验证 user_id
         if not user_id:
             raise HTTPException(
                 status_code=400,
-                detail="user_id 不能为空",
+                detail="缺少 user_id：请在 Authorization header 中提供有效的 token，或在请求体中提供 user_id",
             )
+
+        # 2. 获取其他参数
+        patient_description = request.get("patient_description", "")
+        consultation_purpose = request.get("consultation_purpose", "")
+        files = request.get("files", [])
 
         # 验证输入：至少 patient_description 或 files 有一个必须有值
         if not patient_description and not files:

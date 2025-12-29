@@ -69,7 +69,7 @@ class BusPatientHelper:
         db: Session,
         user_id: str,
         patient_id: str,
-        role: str = "editor",
+        role: str = "owner",
         can_edit: bool = True,
         can_delete: bool = False,
         can_share: bool = False,
@@ -82,7 +82,7 @@ class BusPatientHelper:
             db: 数据库会话
             user_id: 用户ID
             patient_id: 患者ID
-            role: 角色 (owner: 所有者, editor: 编辑者, viewer: 查看者)
+            role: 角色 (owner: 所有者, editor: 编辑者, viewer: 查看者)，默认 owner
             can_edit: 是否可以编辑
             can_delete: 是否可以删除
             can_share: 是否可以分享

@@ -112,20 +112,50 @@ curl http://localhost:9527/health
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| user_id | string | 是 | 用户ID，用于标识创建患者的用户 |
+| user_id | string | 否 | 用户ID（如果未提供 token，则必填） |
 | patient_description | string | 否 | 患者说明文本，描述患者基本情况 |
 | consultation_purpose | string | 否 | 会诊目的，说明本次处理的目标 |
 | files | array | 否 | 文件列表 |
 | files[].file_name | string | 是 | 文件名（含扩展名） |
 | files[].file_content | string | 是 | 文件内容（Base64 编码） |
 
+**认证方式**:
+- **推荐方式**：在 `Authorization` header 中提供 JWT token
+  ```
+  Authorization: Bearer <your_jwt_token>
+  ```
+- **备选方式**：在请求体中提供 `user_id`
+
+**JWT Token 说明**:
+- 算法：HS256（对称加密）
+- 密钥：由系统管理员在 `.env` 文件中配置
+- Token 中需要包含 `sub`、`user_id` 或 `userId` 字段来标识用户
+- 配置项：`JWT_SECRET_KEY` 和 `JWT_ALGORITHM`
+
 **注意**:
-- `user_id` 为必填参数
 - `patient_description` 和 `files` 至少需要提供一个
-- 此接口仅用于创建新患者，创建后会自动为 `user_id` 授予该患者的查看和编辑权限
+- 此接口仅用于创建新患者，创建后会自动为 `user_id` 授予该患者的**所有者（owner）**权限
 - 如需更新现有患者数据，请使用 `POST /api/patients/{patient_id}/chat` 接口
 
-**请求示例**:
+**请求示例 1（使用 Token）**:
+
+```bash
+curl -X POST http://localhost:9527/api/patient_data/process_patient_data_smart \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -d '{
+    "patient_description": "患者李云山的完整病例资料，包含多次检查报告和影像资料",
+    "consultation_purpose": "多学科会诊，制定综合治疗方案，评估预后情况",
+    "files": [
+      {
+        "file_name": "检查报告.pdf",
+        "file_content": "JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PC9UeXBlL0NhdGFsb..."
+      }
+    ]
+  }'
+```
+
+**请求示例 2（使用 user_id）**:
 
 ```json
 {

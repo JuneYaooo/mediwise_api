@@ -102,7 +102,7 @@ def test_scenario_1_file_upload_progress(files):
     }
 
     payload = {
-        "user_id": "71",
+        "user_id": "75",
         "patient_description": "测试文件上传进度反馈功能",
         "consultation_purpose": "验证实时进度功能",
         "files": files
@@ -223,7 +223,7 @@ def test_scenario_2_disconnect(files):
     }
 
     payload = {
-        "user_id": "71",
+        "user_id": "75",
         "patient_description": "患者李云山的完整病例资料，包含多次检查报告和影像资料",
         "consultation_purpose": "多学科会诊，制定综合治疗方案，评估预后情况",
         "files": files

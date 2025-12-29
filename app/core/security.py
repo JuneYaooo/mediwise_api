@@ -18,6 +18,11 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "2880
 # Master token for special access (永久有效的万能Token)
 MASTER_TOKEN = os.getenv("MASTER_TOKEN", "")
 
+# JWT 验证密钥（用于外部系统的 token 验证）
+# 支持 RS256 和 HS256 算法
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")  # 可以是 HS256 或 RS256
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against a hash"""
@@ -48,6 +53,35 @@ def decode_access_token(token: str) -> Optional[TokenData]:
         token_data = TokenData(user_id=user_id)
         return token_data
     except JWTError:
+        return None
+
+
+def decode_external_token(token: str) -> Optional[Dict[str, Any]]:
+    """
+    解码外部系统的 JWT token（支持 HS256 和 RS256）
+
+    Args:
+        token: JWT token 字符串
+
+    Returns:
+        如果验证成功，返回 payload 字典，包含 user_id 等信息
+        如果验证失败，返回 None
+    """
+    try:
+        # 尝试使用配置的算法和密钥解码
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+
+        # 提取 user_id（可能在 sub、user_id、userId 等字段中）
+        user_id = payload.get("sub") or payload.get("user_id") or payload.get("userId")
+
+        if user_id:
+            return {
+                "user_id": str(user_id),
+                "payload": payload
+            }
+        return None
+    except JWTError as e:
+        # Token 验证失败
         return None
 
 
