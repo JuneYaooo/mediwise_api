@@ -70,5 +70,6 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=9527,
-        reload=True
+        reload=True,
+        workers=5
     )

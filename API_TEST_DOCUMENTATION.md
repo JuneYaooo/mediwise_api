@@ -129,7 +129,7 @@ curl http://localhost:9527/health
 
 ```json
 {
-  "user_id": "user_12345",
+  "user_id": "xxx",
   "patient_description": "患者李云山的完整病例资料，包含多次检查报告和影像资料",
   "consultation_purpose": "多学科会诊，制定综合治疗方案，评估预后情况",
   "files": [
