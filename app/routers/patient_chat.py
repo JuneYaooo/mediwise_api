@@ -8,7 +8,7 @@
 
 通过意图识别自动判断用户需求，无需单独调用不同接口。
 """
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Header
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Any, List, Dict, Optional
@@ -29,6 +29,7 @@ from app.models.bus_models import (
 from app.models.bus_patient_helpers import BusPatientHelper
 from app.models.patient_detail_helpers import PatientDetailHelper
 from app.utils.datetime_utils import get_beijing_now_naive
+from app.core.security import decode_external_token
 from src.utils.logger import BeijingLogger
 
 # 导入 Schema
@@ -727,6 +728,7 @@ async def chat_with_patient(
     request: Dict[str, Any],
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None)
 ) -> Any:
     """
     患者对话接口 - 基于 patient_id 的多轮对话聊天（混合模式）
@@ -803,11 +805,33 @@ async def chat_with_patient(
         
         # 4. 生成任务ID
         task_id = str(uuid.uuid4())
-        
-        # 使用固定用户ID（暂无认证）
-        user_id = "system_user"
-        
-        # 5. 获取或创建会话
+
+        # 5. 获取 user_id（优先从 token，其次从请求体）
+        user_id = None
+
+        # 尝试从 Authorization header 中解析 token
+        if authorization:
+            token = authorization.replace("Bearer ", "").strip()
+            if token:
+                token_data = decode_external_token(token)
+                if token_data:
+                    user_id = token_data.get("user_id")
+                    logger.info(f"从 token 中解析出 user_id: {user_id}")
+
+        # 如果 token 中没有获取到 user_id，尝试从请求体获取
+        if not user_id:
+            user_id = request.get("user_id", "").strip() if request.get("user_id") else ""
+            if user_id:
+                logger.info(f"从请求体中获取 user_id: {user_id}")
+
+        # 验证 user_id
+        if not user_id:
+            raise HTTPException(
+                status_code=400,
+                detail="缺少 user_id：请在 Authorization header 中提供有效的 token，或在请求体中提供 user_id"
+            )
+
+        # 6. 获取或创建会话
         # 生成会话标题（如果没有文本消息但有文件，使用文件信息）
         conversation_title = None
         if message:

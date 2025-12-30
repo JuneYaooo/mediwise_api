@@ -1,13 +1,14 @@
 """
-患者PPT生成路由 - 基于 patient_id 的新架构（无需认证）
+患者PPT生成路由 - 基于 patient_id 的新架构
 """
-from typing import Any, Dict
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Any, Dict, Optional
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.models.bus_patient_helpers import BusPatientHelper
 from app.models.bus_models import Patient
+from app.core.security import decode_external_token
 from src.utils.logger import BeijingLogger
 
 logger = BeijingLogger().get_logger()
@@ -18,7 +19,9 @@ router = APIRouter()
 @router.post("/patients/{patient_id}/generate_ppt")
 async def generate_ppt_for_patient(
     patient_id: str,
-    db: Session = Depends(get_db)
+    request: Dict[str, Any] = {},
+    db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None)
 ) -> Any:
     """
     为指定患者生成PPT（基于患者的所有数据）
@@ -49,7 +52,32 @@ async def generate_ppt_for_patient(
     try:
         logger.info(f"开始为患者 {patient_id} 生成PPT")
 
-        # 1. 检查患者是否存在
+        # 1. 获取 user_id（优先从 token，其次从请求体）
+        user_id = None
+
+        # 尝试从 Authorization header 中解析 token
+        if authorization:
+            token = authorization.replace("Bearer ", "").strip()
+            if token:
+                token_data = decode_external_token(token)
+                if token_data:
+                    user_id = token_data.get("user_id")
+                    logger.info(f"从 token 中解析出 user_id: {user_id}")
+
+        # 如果 token 中没有获取到 user_id，尝试从请求体获取
+        if not user_id:
+            user_id = request.get("user_id", "").strip() if request.get("user_id") else ""
+            if user_id:
+                logger.info(f"从请求体中获取 user_id: {user_id}")
+
+        # 验证 user_id
+        if not user_id:
+            raise HTTPException(
+                status_code=400,
+                detail="缺少 user_id：请在 Authorization header 中提供有效的 token，或在请求体中提供 user_id"
+            )
+
+        # 2. 检查患者是否存在
         patient = db.query(Patient).filter(
             Patient.patient_id == patient_id,
             Patient.is_deleted == False
@@ -61,7 +89,7 @@ async def generate_ppt_for_patient(
                 detail=f"患者不存在: {patient_id}"
             )
 
-        # 2. 获取患者的所有数据（timeline, journey, files）
+        # 3. 获取患者的所有数据（timeline, journey, files）
         patient_data = BusPatientHelper.get_patient_all_data_for_ppt(db, patient_id)
 
         if not patient_data.get("patient_timeline"):
@@ -70,7 +98,7 @@ async def generate_ppt_for_patient(
                 detail="患者时间轴数据为空，无法生成PPT。请先处理患者数据。"
             )
 
-        # 3. 准备PPT生成所需数据
+        # 4. 准备PPT生成所需数据
         patient_timeline = patient_data["patient_timeline"]
         patient_journey = patient_data.get("patient_journey", {})
         raw_files_data = patient_data.get("raw_files_data", [])
@@ -81,10 +109,10 @@ async def generate_ppt_for_patient(
                    f"journey={'有' if patient_journey else '无'}, "
                    f"文件数={len(raw_files_data)}")
 
-        # 4. 初始化PPT生成crew
+        # 5. 初始化PPT生成crew
         ppt_crew = PPTGenerationCrew()
 
-        # 5. 生成PPT（使用 patient_id 作为 session_id）
+        # 6. 生成PPT（使用 patient_id 作为 session_id）
         logger.info(f"开始为患者 {patient_id} 生成PPT...")
         result = ppt_crew.generate_ppt(
             patient_timeline=patient_timeline,
@@ -95,7 +123,7 @@ async def generate_ppt_for_patient(
             filter_no_cropped_image=True
         )
 
-        # 6. 检查生成结果
+        # 7. 检查生成结果
         if not result or not result.get("success"):
             error_msg = result.get("error", "PPT生成失败") if result else "PPT生成失败"
             logger.error(f"PPT生成失败: {error_msg}")
@@ -106,11 +134,11 @@ async def generate_ppt_for_patient(
 
         logger.info(f"✅ 患者 {patient_id} 的PPT生成成功")
 
-        # 7. 分别保存 PPT 流程数据和最终成果到数据库
+        # 8. 分别保存 PPT 流程数据和最终成果到数据库
         try:
             import time
 
-            # 7.1 保存 PPT 流程数据（ppt_data）
+            # 8.1 保存 PPT 流程数据（ppt_data）
             ppt_data = result.get("ppt_data")
             treatment_gantt_data = result.get("treatment_gantt_data")
 
@@ -120,11 +148,11 @@ async def generate_ppt_for_patient(
                     patient_id=patient_id,
                     ppt_data=ppt_data,
                     treatment_gantt_data=treatment_gantt_data,
-                    user_id="system"
+                    user_id=user_id
                 )
                 logger.info(f"已保存PPT流程数据: patient_id={patient_id}")
 
-            # 7.2 保存 PPT 最终成果（ppt_final）
+            # 8.2 保存 PPT 最终成果（ppt_final）
             BusPatientHelper.save_ppt_final(
                 db=db,
                 patient_id=patient_id,
@@ -136,7 +164,7 @@ async def generate_ppt_for_patient(
                 generated_at=time.strftime('%Y-%m-%d %H:%M:%S'),
                 success=result.get("success"),
                 message=result.get("message"),
-                user_id="system"
+                user_id=user_id
             )
             logger.info(f"已保存PPT最终成果: patient_id={patient_id}, ppt_url={result.get('ppt_url')}")
 
@@ -148,7 +176,7 @@ async def generate_ppt_for_patient(
             logger.error(traceback.format_exc())
             # 不影响返回结果，继续执行
 
-        # 8. 返回结果（包含患者基本信息）
+        # 9. 返回结果（包含患者基本信息）
         result["patient_info"] = patient_info
         return result
 
