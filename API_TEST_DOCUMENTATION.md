@@ -3,7 +3,41 @@
 **版本**: 1.0.0
 **Base URL**: `http://182.254.240.153:9527`
 **本地测试**: `http://localhost:9527`
-**认证方式**: 暂无需认证
+**认证方式**: 部分接口需要 JWT Token 鉴权（见下方说明）
+
+---
+
+## 认证说明
+
+### 需要 Token 鉴权的接口
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/patients/{patient_id}/chat` | POST | 患者对话接口 |
+| `/api/patients/{patient_id}/generate_ppt` | POST | 生成患者 PPT |
+
+### 不需要鉴权的接口
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/` | GET | 根路径 |
+| `/health` | GET | 健康检查 |
+| `/api/patient_data/process_patient_data_smart` | POST | 患者首次数据处理（支持 Token 或 user_id） |
+| `/api/patient_data/task_status/{task_id}` | GET | 查询任务状态 |
+| `/api/patients/{patient_id}/ppt_data` | GET | 获取患者 PPT 数据 |
+
+### JWT Token 格式
+
+```
+Authorization: Bearer <your_jwt_token>
+```
+
+### Token 配置
+
+- 算法：HS256 或 HS512（对称加密）
+- 密钥：由系统管理员在 `.env` 文件中配置
+- Token 中需要包含 `sub`、`user_id`、`userid` 或 `userId` 字段来标识用户
+- 配置项：`JWT_SECRET_KEY` 和 `JWT_ALGORITHM`
 
 ---
 
@@ -390,6 +424,8 @@ GET /api/patient_data/task_status/uuid-xxx-xxx
 
 **接口**: `POST /api/patients/{patient_id}/chat`
 
+**🔐 认证**: **需要 Token 鉴权**
+
 **功能说明**:
 - 🔄 **智能意图识别**: 自动判断用户意图（对话 / 新增数据 / 修改数据）
 - 💬 **普通对话**: 基于患者信息回答问题
@@ -419,7 +455,12 @@ GET /api/patient_data/task_status/uuid-xxx-xxx
 
 **请求方式**: `POST`
 
-**Content-Type**: `application/json`
+**请求头**:
+
+| Header | 值 | 必填 | 说明 |
+|--------|------|------|------|
+| Content-Type | application/json | 是 | 请求内容类型 |
+| Authorization | Bearer \<token\> | 是 | JWT Token 鉴权 |
 
 **路径参数**:
 
@@ -456,25 +497,31 @@ GET /api/patient_data/task_status/uuid-xxx-xxx
 
 **请求示例（普通对话）**:
 
-```json
-{
-  "message": "这位患者的治疗方案有什么建议？",
-  "conversation_id": "conv_uuid_xxx"
-}
+```bash
+curl -X POST http://localhost:9527/api/patients/{patient_id}/chat \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -d '{
+    "message": "这位患者的治疗方案有什么建议？",
+    "conversation_id": "conv_uuid_xxx"
+  }'
 ```
 
 **请求示例（新增数据 - 上传文件）**:
 
-```json
-{
-  "message": "补充最新复查报告和影像资料，用于跟踪治疗效果",
-  "files": [
-    {
-      "file_name": "复查CT.pdf",
-      "file_content": "JVBERi0xLjQK..."
-    }
-  ]
-}
+```bash
+curl -X POST http://localhost:9527/api/patients/{patient_id}/chat \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -d '{
+    "message": "补充最新复查报告和影像资料，用于跟踪治疗效果",
+    "files": [
+      {
+        "file_name": "复查CT.pdf",
+        "file_content": "JVBERi0xLjQK..."
+      }
+    ]
+  }'
 ```
 
 **请求示例（修改数据）**:
@@ -585,6 +632,7 @@ data: {"status": "completed", "message": "处理完成", "progress": 100, "durat
 **HTTP 状态码**:
 - `200`: 成功建立流式连接
 - `400`: 请求参数错误（message 和 files 至少需要提供一个）
+- `401`: 未授权（缺少或无效的 Token）
 - `404`: 患者不存在
 - `500`: 服务器内部错误
 
@@ -596,6 +644,8 @@ data: {"status": "completed", "message": "处理完成", "progress": 100, "durat
 
 **接口**: `POST /api/patients/{patient_id}/generate_ppt`
 
+**🔐 认证**: **需要 Token 鉴权**
+
 **功能说明**:
 - 基于患者的所有结构化数据生成医疗会诊 PPT
 - 自动聚合患者的时间轴、诊疗历程、MDT 报告等数据
@@ -604,6 +654,13 @@ data: {"status": "completed", "message": "处理完成", "progress": 100, "durat
 - 自动保存 PPT 数据和成果到数据库
 
 **请求方式**: `POST`
+
+**请求头**:
+
+| Header | 值 | 必填 | 说明 |
+|--------|------|------|------|
+| Content-Type | application/json | 是 | 请求内容类型 |
+| Authorization | Bearer \<token\> | 是 | JWT Token 鉴权 |
 
 **路径参数**:
 
@@ -614,7 +671,9 @@ data: {"status": "completed", "message": "处理完成", "progress": 100, "durat
 **请求示例**:
 
 ```bash
-POST /api/patients/patient_uuid_xxx/generate_ppt
+curl -X POST http://localhost:9527/api/patients/patient_uuid_xxx/generate_ppt \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
 
 **请求 Body**: 无需提供
@@ -652,6 +711,7 @@ POST /api/patients/patient_uuid_xxx/generate_ppt
 **HTTP 状态码**:
 - `200`: 成功生成 PPT
 - `400`: 患者数据不完整，无法生成（如时间轴数据为空）
+- `401`: 未授权（缺少或无效的 Token）
 - `404`: 患者不存在
 - `500`: PPT 生成失败
 

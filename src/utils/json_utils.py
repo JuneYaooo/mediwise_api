@@ -311,23 +311,29 @@ class JsonUtils:
         """
         安全解析JSON，具有完整的错误处理。如果输入已经是字典，则直接返回。
         集成了所有常见的JSON解析错误处理步骤，避免在代码中重复try-except块。
-        
+
         Args:
             input_data: 要解析的数据，可以是字符串或已经是字典的对象
             debug_prefix: 调试输出的前缀，用于区分不同的调用位置
-            
+
         Returns:
             解析后的字典，如果解析失败则返回空字典 {}
+            注意：如果解析结果是列表，也会原样返回列表（虽然类型注解是Dict）
         """
         # 如果已经是字典类型，直接返回
         if isinstance(input_data, dict):
             return input_data
-            
+
+        # 如果已经是列表类型，直接返回（调用方需要处理列表情况）
+        if isinstance(input_data, list):
+            print(f"\033[93m[{debug_prefix}警告] 输入已经是列表类型，直接返回\033[0m")
+            return input_data
+
         # 检查空输入
         if input_data is None or (isinstance(input_data, str) and not input_data.strip()):
             print(f"\033[91m[{debug_prefix}JSON解析错误] 输入为空\033[0m")
             return {}
-            
+
         # 如果不是字符串，尝试转换为字符串
         if not isinstance(input_data, str):
             try:
@@ -335,7 +341,7 @@ class JsonUtils:
             except Exception as e:
                 print(f"\033[91m[{debug_prefix}无法转换为字符串] {str(e)}\033[0m")
                 return {}
-        
+
         # 先尝试解码Unicode转义序列
         try:
             # 处理可能存在的Unicode转义序列，如 \u4e2d\u6587
@@ -345,27 +351,35 @@ class JsonUtils:
             print(f"\033[93m[{debug_prefix}Unicode解码警告] {str(e)}\033[0m")
             # 如果Unicode解码失败，继续使用原始数据
             pass
-                
+
         # 尝试直接解析
         try:
             result = JsonUtils.parse_json(input_data)
             # 递归处理结果中可能存在的Unicode编码问题
-            return JsonUtils._decode_unicode_in_dict(result)
+            decoded_result = JsonUtils._decode_unicode_in_dict(result)
+            # 如果解析结果是列表，打印警告（调用方需要处理）
+            if isinstance(decoded_result, list):
+                print(f"\033[93m[{debug_prefix}警告] JSON解析结果是列表类型，调用方需要处理\033[0m")
+            return decoded_result
         except ValueError as e:
             print(f"\033[91m[{debug_prefix}JSON解析错误] {str(e)}\033[0m")
-            
+
             # 尝试从文本中提取JSON
             json_str = JsonUtils.extract_json_from_text(input_data)
             if json_str:
                 try:
                     result = JsonUtils.parse_json(json_str, fix_format=True)
-                    return JsonUtils._decode_unicode_in_dict(result)
+                    decoded_result = JsonUtils._decode_unicode_in_dict(result)
+                    # 如果解析结果是列表，打印警告
+                    if isinstance(decoded_result, list):
+                        print(f"\033[93m[{debug_prefix}警告] 从文本提取的JSON是列表类型，调用方需要处理\033[0m")
+                    return decoded_result
                 except Exception as e2:
                     print(f"\033[91m[{debug_prefix}JSON修复后依然出错] {str(e2)}\033[0m")
                     print(f"\033[93m[{debug_prefix}提取的JSON内容] {json_str[:300]}...\033[0m" if len(json_str) > 300 else f"\033[93m[{debug_prefix}提取的JSON内容] {json_str}\033[0m")
             else:
                 print(f"\033[91m[{debug_prefix}无法从文本中提取JSON] {input_data[:200]}...\033[0m" if len(input_data) > 200 else f"\033[91m[{debug_prefix}无法从文本中提取JSON] {input_data}\033[0m")
-        
+
         # 如果所有解析尝试都失败，返回空字典
         return {}
 

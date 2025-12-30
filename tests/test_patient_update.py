@@ -9,10 +9,12 @@
 
 使用说明：
 1. 修改下方的 PATIENT_ID 为实际的患者ID
-2. python test_patient_update.py
+2. 配置有效的 TEST_TOKEN
+3. python test_patient_update.py
 
 接口说明：
 - 使用新的 POST /api/patients/{patient_id}/chat 接口
+- 需要 Token 鉴权
 - 支持对话式交互更新患者信息
 - 自动合并现有数据和新数据
 """
@@ -32,12 +34,23 @@ CASE_DIR = "/home/ubuntu/data/patient_case/xuguoqiang/"
 # ⚠️ 请在此填入要更新的患者ID（从 test_flow_simple.py 运行结果中获取）
 PATIENT_ID = "9fe7227c-1b98-4e6b-aed3-dec22172f091"  # 👈 修改这里
 
+# Token 配置 - 请替换为有效的 JWT Token（chat 接口需要鉴权）
+TEST_TOKEN = "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJ1c2VyaWQiOiI3MSIsImxvZ2lubmFtZSI6InRlc3QiLCJyZWFsbmFtZSI6Iua1i-ivlei0puWPtyIsImRlcHRpZCI6IjkiLCJkZXB0Y29kZSI6ImdhZ2JkcTB3IiwiZGVwdG5hbWUiOiLpu5jorqTlsI_nu4QiLCJkZXB0cGF0aCI6Ii8xLzgvOS8iLCJkYXRhc2NvcGUiOiI0IiwiaXN0YWciOiIwIiwibG9naW50eXBlIjoi6LSm5Y-35a-G56CBIiwicmVmcmVzaHRva2VuIjoiYzhjMDkwNzVlMzBhNDcwOWI2YTQyZDljMTJmMmQ0ODgiLCJuYmYiOjE3NjY5ODIzOTAsImV4cCI6MTc2NzU4NzE5MCwiaWF0IjoxNzY2OTgyMzkwLCJpc3MiOiJzdXZhbHVlIiwiYXVkIjoibWR0LnN1dmFsdWUuY29tIn0.oTFULgLZRGxt0mGyBLGM2krUrPEFKOYGPzbo958MozgqVnxd_Hkvom580daDFnCX4IoXP7qHdMdbq34j7xArXg"
+
 # 文件配置
 MAX_FILES = 3  # 读取后3个文件
 
 # 调试配置
 DEBUG_PRINT_RAW_API = False  # 设置为 True 时打印原始API返回
 # ================================
+
+
+def get_auth_headers():
+    """获取带认证的请求头"""
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {TEST_TOKEN}"
+    }
 
 
 def get_beijing_time():
@@ -144,11 +157,12 @@ def modify_patient_data(patient_id):
 
 
 def _send_chat_request(patient_id, payload):
-    """发送chat请求的通用方法"""
+    """发送chat请求的通用方法（带 Token 鉴权）"""
     files = payload.get('files', [])
-    
+
     print(f"📤 发送请求到: {API_BASE_URL}/api/patients/{patient_id}/chat")
     print(f"🆔 患者ID: {patient_id}")
+    print(f"🔑 使用 Token 鉴权")
     print(f"📊 消息内容: {payload['message']}")
     print(f"📁 文件数量: {len(files)}")
     print(f"⏰ 时间: {get_beijing_time()}")
@@ -156,6 +170,7 @@ def _send_chat_request(patient_id, payload):
     try:
         response = requests.post(
             f"{API_BASE_URL}/api/patients/{patient_id}/chat",
+            headers=get_auth_headers(),
             json=payload,
             stream=True,
             timeout=600
@@ -283,6 +298,7 @@ def main():
     print(f"🆔 患者ID: {PATIENT_ID}")
     print(f"🌐 API地址: {API_BASE_URL}")
     print(f"📂 数据目录: {CASE_DIR}")
+    print(f"🔑 Token: {'已配置' if TEST_TOKEN else '未配置'}")
     print(f"⏰ 当前时间: {get_beijing_time()}")
     
     # 选择测试场景

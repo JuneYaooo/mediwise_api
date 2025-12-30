@@ -1,11 +1,24 @@
 #!/usr/bin/env python3
 """
 PPT API 测试脚本
+
+需要 Token 鉴权的接口：
+- POST /api/patients/{patient_id}/generate_ppt
 """
 import requests
 import json
 
-BASE_URL = "http://182.254.240.153:9527"#"http://182.254.240.153:9527" #"http://localhost:9527"
+BASE_URL = "http://182.254.240.153:9527"  # "http://localhost:9527"
+
+# Token 配置 - 请替换为有效的 JWT Token
+TEST_TOKEN = "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJ1c2VyaWQiOiI3MSIsImxvZ2lubmFtZSI6InRlc3QiLCJyZWFsbmFtZSI6Iua1i-ivlei0puWPtyIsImRlcHRpZCI6IjkiLCJkZXB0Y29kZSI6ImdhZ2JkcTB3IiwiZGVwdG5hbWUiOiLpu5jorqTlsI_nu4QiLCJkZXB0cGF0aCI6Ii8xLzgvOS8iLCJkYXRhc2NvcGUiOiI0IiwiaXN0YWciOiIwIiwibG9naW50eXBlIjoi6LSm5Y-35a-G56CBIiwicmVmcmVzaHRva2VuIjoiYzhjMDkwNzVlMzBhNDcwOWI2YTQyZDljMTJmMmQ0ODgiLCJuYmYiOjE3NjY5ODIzOTAsImV4cCI6MTc2NzU4NzE5MCwiaWF0IjoxNzY2OTgyMzkwLCJpc3MiOiJzdXZhbHVlIiwiYXVkIjoibWR0LnN1dmFsdWUuY29tIn0.oTFULgLZRGxt0mGyBLGM2krUrPEFKOYGPzbo958MozgqVnxd_Hkvom580daDFnCX4IoXP7qHdMdbq34j7xArXg"
+
+def get_auth_headers():
+    """获取带认证的请求头"""
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {TEST_TOKEN}"
+    }
 
 def test_get_ppt_data(patient_id):
     """测试获取 PPT 数据"""
@@ -52,17 +65,18 @@ def test_get_ppt_data(patient_id):
 
 
 def test_generate_ppt(patient_id):
-    """测试生成 PPT"""
+    """测试生成 PPT（需要 Token 鉴权）"""
     print(f"\n{'='*60}")
-    print(f"📄 测试 2: 生成患者 PPT")
+    print(f"📄 测试 2: 生成患者 PPT（需要 Token 鉴权）")
     print(f"{'='*60}")
 
     url = f"{BASE_URL}/api/patients/{patient_id}/generate_ppt"
     print(f"请求 URL: {url}")
+    print("🔑 使用 Token 鉴权")
     print("⚠️  注意：PPT 生成可能需要较长时间...")
 
     try:
-        response = requests.post(url, timeout=300)  # 5分钟超时
+        response = requests.post(url, headers=get_auth_headers(), timeout=300)  # 5分钟超时
         print(f"状态码: {response.status_code}")
 
         if response.status_code == 200:
@@ -135,6 +149,7 @@ if __name__ == "__main__":
     print(f"\n📋 测试配置:")
     print(f"   患者ID: {PATIENT_ID}")
     print(f"   生成PPT: {'是' if GENERATE_PPT else '否'}")
+    print(f"   Token: {'已配置' if TEST_TOKEN else '未配置'}")
 
     # 2. 验证患者是否存在
     print(f"\n🔍 验证患者是否存在...")

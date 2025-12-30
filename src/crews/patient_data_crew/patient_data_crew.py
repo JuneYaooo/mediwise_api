@@ -304,24 +304,40 @@ class PatientDataCrew():
             existing_timeline = None
             existing_patient_journey = None
             existing_mdt_report = None
-            
+
             if existing_patient_data:
                 logger.info("Found existing patient data from database, will perform incremental update")
-                
+
                 # 安全地获取现有数据，处理可能为None的情况
                 patient_timeline_data = existing_patient_data.get("patient_timeline")
                 existing_timeline = patient_timeline_data.get("timeline", []) if patient_timeline_data else []
-                
+
                 existing_patient_journey = existing_patient_data.get("patient_journey")
                 if existing_patient_journey is None:
                     existing_patient_journey = {}
-                
+
+                # 🚨 修复：如果 existing_patient_journey 是列表格式（历史数据格式错误），修正为字典格式
+                if isinstance(existing_patient_journey, list):
+                    logger.warning(f"⚠️ 从数据库读取的 existing_patient_journey 是列表格式，将其修正为字典格式")
+                    existing_patient_journey = {
+                        "timeline_journey": existing_patient_journey,
+                        "indicator_series": []
+                    }
+                elif isinstance(existing_patient_journey, dict):
+                    # 确保包含必需的字段
+                    if "timeline_journey" not in existing_patient_journey:
+                        existing_patient_journey["timeline_journey"] = []
+                        logger.warning(f"⚠️ existing_patient_journey 缺少 timeline_journey 字段，已添加空数组")
+                    if "indicator_series" not in existing_patient_journey:
+                        existing_patient_journey["indicator_series"] = []
+                        logger.warning(f"⚠️ existing_patient_journey 缺少 indicator_series 字段，已添加空数组")
+
                 existing_mdt_report = existing_patient_data.get("mdt_simple_report")
                 if existing_mdt_report is None:
                     existing_mdt_report = {}
-                
+
                 logger.info(f"Existing data contains {len(existing_timeline)} timeline entries")
-                
+
                 # 记录现有数据的详细信息
                 if existing_patient_journey and "timeline_journey" in existing_patient_journey:
                     logger.info(f"Existing patient journey contains {len(existing_patient_journey['timeline_journey'])} journey events")
@@ -687,6 +703,14 @@ class PatientDataCrew():
                             logger.warning(f"患者时间旅程JSON缺少字段: {missing_fields}")
                         else:
                             logger.info(f"成功提取患者时间旅程，包含{len(special_parsed_result.get('timeline_journey', []))}个时间节点和{len(special_parsed_result.get('indicator_series', []))}个指标序列")
+                    elif isinstance(special_parsed_result, list):
+                        # 🚨 修复：如果 LLM 返回的是列表，将其包装为正确的字典格式
+                        logger.warning("患者时间旅程解析结果是列表格式，将其包装为字典格式（timeline_journey）")
+                        special_parsed_result = {
+                            "timeline_journey": special_parsed_result,
+                            "indicator_series": []  # indicator_series 丢失了，设为空数组
+                        }
+                        logger.warning("⚠️ indicator_series 数据丢失，LLM 返回格式不正确")
                     else:
                         logger.warning("患者时间旅程解析结果不是字典格式")
                 else:

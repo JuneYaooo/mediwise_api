@@ -201,6 +201,19 @@ class BusPatientHelper:
 
         # 2. 保存患者就诊历程 (journey)
         if patient_journey:
+            # 🚨 格式校验：确保 patient_journey 是字典格式，包含 timeline_journey 和 indicator_series
+            if isinstance(patient_journey, list):
+                logger.warning(f"patient_journey 是列表格式，将其包装为字典格式")
+                patient_journey = {
+                    "timeline_journey": patient_journey,
+                    "indicator_series": []
+                }
+            elif isinstance(patient_journey, dict):
+                # 确保包含必需的字段
+                if "timeline_journey" not in patient_journey and "indicator_series" not in patient_journey:
+                    # 可能是其他格式，尝试识别
+                    logger.warning(f"patient_journey 字典格式但缺少必需字段，当前键: {list(patient_journey.keys())}")
+
             journey_record = PatientStructuredData(
                 id=str(uuid.uuid4()),
                 patient_id=patient_id,
@@ -304,15 +317,27 @@ class BusPatientHelper:
                 logger.info(f"创建患者时间轴数据: {timeline_record.id}")
             
             updated_records["timeline"] = timeline_record
-        
+
         # 2. 更新或创建 journey
         if patient_journey is not None:
+            # 🚨 格式校验：确保 patient_journey 是字典格式，包含 timeline_journey 和 indicator_series
+            if isinstance(patient_journey, list):
+                logger.warning(f"[update_structured_data] patient_journey 是列表格式，将其包装为字典格式")
+                patient_journey = {
+                    "timeline_journey": patient_journey,
+                    "indicator_series": []
+                }
+            elif isinstance(patient_journey, dict):
+                # 确保包含必需的字段
+                if "timeline_journey" not in patient_journey and "indicator_series" not in patient_journey:
+                    logger.warning(f"[update_structured_data] patient_journey 字典格式但缺少必需字段，当前键: {list(patient_journey.keys())}")
+
             journey_record = db.query(PatientStructuredData).filter(
                 PatientStructuredData.patient_id == patient_id,
                 PatientStructuredData.data_type == "journey",
                 PatientStructuredData.is_deleted == False
             ).order_by(PatientStructuredData.created_at.desc()).first()
-            
+
             if journey_record:
                 # 更新现有记录
                 journey_record.structuredcontent = patient_journey
@@ -336,7 +361,7 @@ class BusPatientHelper:
                 )
                 db.add(journey_record)
                 logger.info(f"创建患者就诊历程数据: {journey_record.id}")
-            
+
             updated_records["journey"] = journey_record
         
         # 3. 更新或创建 mdt_report
