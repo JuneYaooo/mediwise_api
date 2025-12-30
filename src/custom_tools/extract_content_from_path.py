@@ -988,34 +988,61 @@ MIME类型: {mime_type}
                     for future in concurrent.futures.as_completed(futures):
                         file_path = futures[future]
                         filename = os.path.basename(file_path)
-                        
+
                         try:
                             result = future.result()
                             if result:
                                 if isinstance(result, list):
                                     for sub_result in result:
                                         if isinstance(sub_result, dict):
-                                            original_path = file_path
-                                            file_ext = os.path.splitext(filename)[1].lower()
-                                            
-                                            if file_ext in ['.png', '.jpg', '.jpeg', '.webp', '.heic', '.heif', '.pdf', '.docx', '.pptx', '.ppt']:
-                                                # 为二进制文件创建持久副本
-                                                persistent_filename = f"{sub_result.get('file_uuid', str(uuid.uuid4()))}{file_ext}"
-                                                persistent_path = os.path.join(persistent_temp_dir, persistent_filename)
-                                                
-                                                try:
-                                                    shutil.copy2(original_path, persistent_path)
-                                                    sub_result['original_file_path'] = persistent_path
+                                            # 🔧 修复：根据每个子结果自己的信息决定如何处理
+                                            # 如果子结果已经有 temp_file_path（如 PDF 提取的图片），优先使用它
+                                            sub_temp_path = sub_result.get('temp_file_path')
+                                            sub_file_name = sub_result.get('file_name', filename)
+                                            sub_file_ext = os.path.splitext(sub_file_name)[1].lower() if sub_file_name else ''
+
+                                            # PDF提取的图片已经有自己的 temp_file_path，不需要重新处理
+                                            if sub_temp_path and os.path.exists(sub_temp_path):
+                                                # 子结果已经有有效的临时文件路径，保持不变
+                                                if not sub_result.get('original_file_path'):
+                                                    sub_result['original_file_path'] = sub_temp_path
+                                                if sub_result.get('temp_file_available') is None:
                                                     sub_result['temp_file_available'] = True
-                                                    sub_result['persistent_temp_file'] = True
-                                                except Exception as e:
-                                                    logger.warning(f"复制文件失败: {filename}")
-                                                    sub_result['original_file_path'] = original_path
-                                                    sub_result['temp_file_available'] = False
                                             else:
-                                                sub_result['original_file_path'] = original_path
-                                                sub_result['temp_file_available'] = True
-                                    
+                                                # 使用父文件路径（如 ZIP 中的 PDF 本身）
+                                                original_path = file_path
+                                                parent_file_ext = os.path.splitext(filename)[1].lower()
+
+                                                # 只对与父文件扩展名匹配的结果（如 PDF 本身）进行持久化
+                                                if parent_file_ext in ['.png', '.jpg', '.jpeg', '.webp', '.heic', '.heif', '.pdf', '.docx', '.pptx', '.ppt']:
+                                                    # 检查这个子结果是否是父文件本身（通过 extraction_mode 或 file_extension 判断）
+                                                    is_parent_file = (
+                                                        sub_result.get('extraction_mode') == 'with_images' or
+                                                        sub_result.get('file_extension') == parent_file_ext.lstrip('.')
+                                                    )
+
+                                                    if is_parent_file:
+                                                        # 为父文件创建持久副本
+                                                        persistent_filename = f"{sub_result.get('file_uuid', str(uuid.uuid4()))}{parent_file_ext}"
+                                                        persistent_path = os.path.join(persistent_temp_dir, persistent_filename)
+
+                                                        try:
+                                                            shutil.copy2(original_path, persistent_path)
+                                                            sub_result['original_file_path'] = persistent_path
+                                                            sub_result['temp_file_available'] = True
+                                                            sub_result['persistent_temp_file'] = True
+                                                        except Exception as e:
+                                                            logger.warning(f"复制文件失败: {filename}, 错误: {e}")
+                                                            sub_result['original_file_path'] = original_path
+                                                            sub_result['temp_file_available'] = False
+                                                    else:
+                                                        # 子文件（如 PDF 提取的图片），但没有有效的 temp_file_path
+                                                        logger.warning(f"子文件 {sub_file_name} 缺少有效的 temp_file_path")
+                                                        sub_result['temp_file_available'] = False
+                                                else:
+                                                    sub_result['original_file_path'] = original_path
+                                                    sub_result['temp_file_available'] = True
+
                                     processed_files.extend(result)
                                     success_count += len(result)
                                 else:

@@ -187,8 +187,8 @@ class QiniuUploadService:
         logger.info(f"  temp_file_path: {extracted_file.get('temp_file_path')}")
         logger.info(f"  persistent_temp_file: {extracted_file.get('persistent_temp_file')}")
 
-        # 优先使用原始文件路径
-        original_file_path = extracted_file.get('original_file_path')
+        # 优先使用原始文件路径，也检查 temp_file_path（PDF提取的图片用这个字段）
+        original_file_path = extracted_file.get('original_file_path') or extracted_file.get('temp_file_path')
         temp_file_available = extracted_file.get('temp_file_available', False)
 
         logger.info(f"  检查条件: original_file_path={bool(original_file_path)}, temp_file_available={temp_file_available}, exists={os.path.exists(original_file_path) if original_file_path else False}")
@@ -207,6 +207,8 @@ class QiniuUploadService:
                 return True
             else:
                 logger.error(f"❌ 原始文件上传失败: {sub_file_name}, 错误: {error}")
+                extracted_file['upload_failed'] = True
+                extracted_file['upload_error'] = error
 
         # 降级策略：根据文件类型处理
         if file_extension in BINARY_EXTENSIONS:

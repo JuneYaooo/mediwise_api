@@ -426,10 +426,13 @@ class FileProcessingManager:
         logger.info(f"开始上传 {len(pdf_images)} 张从PDF提取的图片")
 
         for pdf_image in pdf_images:
-            # 使用upload_zip_subfile方法，它已经支持temp_file_path
-            # 重命名字段以适配（从temp_file_path到original_file_path）
-            if pdf_image.get('temp_file_path'):
+            # 确保 original_file_path 正确设置（优先使用 temp_file_path）
+            if not pdf_image.get('original_file_path') and pdf_image.get('temp_file_path'):
                 pdf_image['original_file_path'] = pdf_image['temp_file_path']
+
+            # 确保 temp_file_available 已设置
+            if pdf_image.get('temp_file_path') and os.path.exists(pdf_image.get('temp_file_path', '')):
+                pdf_image['temp_file_available'] = True
 
             self.upload_service.upload_zip_subfile(pdf_image, conversation_id)
 
