@@ -57,13 +57,20 @@ class PatientDetailHelper:
             patient_id = conversation.patient_id
             user_id = conversation.user_id
 
-            # 2. 更新患者的raw_file_ids
+            # 2. 更新患者的raw_file_ids（使用逗号分隔格式，保持一致性）
             if raw_file_ids:
                 patient = db.query(Patient).filter(Patient.patient_id == patient_id).first()
                 if patient:
-                    patient.raw_file_ids = json.dumps(raw_file_ids)
+                    # 合并现有文件ID和新文件ID，避免重复
+                    existing_ids = []
+                    if patient.raw_file_ids:
+                        # 清理现有数据：移除引号、方括号等
+                        cleaned = patient.raw_file_ids.replace('"', '').replace('[', '').replace(']', '')
+                        existing_ids = [id.strip() for id in cleaned.split(",") if id.strip()]
+                    all_file_ids = list(set(existing_ids + raw_file_ids))
+                    patient.raw_file_ids = ",".join(filter(None, all_file_ids))
                     patient.updated_at = get_beijing_now_naive()
-                    logger.info(f"更新患者文件ID列表: {patient_id}, 文件数: {len(raw_file_ids)}")
+                    logger.info(f"更新患者文件ID列表: {patient_id}, 文件数: {len(all_file_ids)}")
 
             # 3. 保存文件记录到bus_patient_files
             if raw_files_data:

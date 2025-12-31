@@ -131,7 +131,11 @@ async def stream_chat_processing(
                 try:
                     patient = db.query(Patient).filter(Patient.patient_id == patient_id).first()
                     if patient:
-                        existing_ids = patient.raw_file_ids.split(",") if patient.raw_file_ids else []
+                        # 清理现有数据：移除引号、方括号等脏字符
+                        existing_ids = []
+                        if patient.raw_file_ids:
+                            cleaned = patient.raw_file_ids.replace('"', '').replace('[', '').replace(']', '')
+                            existing_ids = [id.strip() for id in cleaned.split(",") if id.strip()]
                         all_file_ids = list(set(existing_ids + uploaded_file_ids))
                         patient.raw_file_ids = ",".join(filter(None, all_file_ids))
                         db.commit()

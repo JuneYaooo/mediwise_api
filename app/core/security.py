@@ -67,6 +67,9 @@ def decode_external_token(token: str) -> Optional[Dict[str, Any]]:
         如果验证成功，返回 payload 字典，包含 user_id 等信息
         如果验证失败，返回 None
     """
+    from src.utils.logger import BeijingLogger
+    logger = BeijingLogger().get_logger()
+
     try:
         # 尝试使用配置的算法和密钥解码
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
@@ -75,13 +78,33 @@ def decode_external_token(token: str) -> Optional[Dict[str, Any]]:
         user_id = payload.get("sub") or payload.get("user_id") or payload.get("userId")
 
         if user_id:
+            logger.debug(f"Token 验证成功, user_id: {user_id}")
             return {
                 "user_id": str(user_id),
                 "payload": payload
             }
+        else:
+            logger.warning(f"Token 验证成功但缺少 user_id 字段, payload keys: {list(payload.keys())}")
         return None
     except JWTError as e:
-        # Token 验证失败
+        # Token 验证失败，记录详细错误
+        logger.warning(f"Token 验证失败: {type(e).__name__}: {str(e)}")
+        # 尝试解码不验证签名，查看 payload 内容（仅用于调试）
+        try:
+            import base64
+            import json
+            parts = token.split('.')
+            if len(parts) >= 2:
+                # 解码 payload 部分（不验证签名）
+                payload_part = parts[1]
+                # 添加 padding
+                padding = 4 - len(payload_part) % 4
+                if padding != 4:
+                    payload_part += '=' * padding
+                decoded_payload = json.loads(base64.urlsafe_b64decode(payload_part))
+                logger.warning(f"Token payload (未验证): {decoded_payload}")
+        except Exception:
+            pass
         return None
 
 

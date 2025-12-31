@@ -642,39 +642,48 @@ async def smart_stream_patient_data_processing(
         )
         logger.info(f"[首次处理任务 {task_id}] 患者数据已保存到数据库")
 
-        # 从结构化数据中提取患者姓名、出生日期，并更新 bus_patient 表
-        patient_timeline = result.get("full_structure_data", {})
-        if patient_timeline and isinstance(patient_timeline, dict):
-            basic_info = patient_timeline.get("基本信息", {})
+        # 从结构化数据中提取患者姓名、年龄、性别等信息，并更新 bus_patient 表
+        # 注意：full_structure_data 的格式是 { "patient_info": { "basic": { "name", "age", "gender" } }, "timeline": [...] }
+        full_structure_data = result.get("full_structure_data", {})
+        if full_structure_data and isinstance(full_structure_data, dict):
+            patient_info = full_structure_data.get("patient_info", {})
+            basic_info = patient_info.get("basic", {})
 
             # 提取姓名
-            extracted_name = basic_info.get("姓名") or basic_info.get("患者姓名") or basic_info.get("name")
+            extracted_name = basic_info.get("name") or basic_info.get("姓名") or basic_info.get("患者姓名")
             if extracted_name and extracted_name != "患者":
                 patient.name = extracted_name
                 logger.info(f"[混合任务 {task_id}] 从结构化数据中提取患者姓名: {extracted_name}")
 
-            # 提取出生日期
-            birth_date_str = basic_info.get("出生日期") or basic_info.get("birth_date")
-            if birth_date_str:
+            # 提取年龄（可以用来推算出生日期）
+            age = basic_info.get("age") or basic_info.get("年龄")
+            if age:
                 try:
                     from datetime import datetime
-                    # 尝试多种日期格式
-                    for fmt in ["%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日"]:
-                        try:
-                            patient.birth_date = datetime.strptime(birth_date_str, fmt)
-                            logger.info(f"[混合任务 {task_id}] 从结构化数据中提取出生日期: {birth_date_str}")
-                            break
-                        except ValueError:
-                            continue
+                    # 尝试从年龄推算出生年份
+                    age_int = int(str(age).replace("岁", "").replace("周岁", "").strip())
+                    birth_year = datetime.now().year - age_int
+                    patient.birth_date = datetime(birth_year, 1, 1)  # 使用1月1日作为默认日期
+                    logger.info(f"[混合任务 {task_id}] 从年龄推算出生年份: {age} -> {birth_year}-01-01")
                 except Exception as e:
-                    logger.warning(f"[混合任务 {task_id}] 解析出生日期失败: {birth_date_str}, 错误: {e}")
+                    logger.warning(f"[混合任务 {task_id}] 从年龄推算出生日期失败: {age}, 错误: {e}")
+
+            # 提取性别
+            gender = basic_info.get("gender") or basic_info.get("性别")
+            if gender:
+                patient.gender = gender
+                logger.info(f"[混合任务 {task_id}] 从结构化数据中提取性别: {gender}")
 
         # 更新 raw_file_ids（用逗号分隔）
         if uploaded_file_ids:
-            # 合并现有文件ID和新文件ID
-            existing_ids = patient.raw_file_ids.split(",") if patient.raw_file_ids else []
+            # 合并现有文件ID和新文件ID，清理脏数据
+            existing_ids = []
+            if patient.raw_file_ids:
+                # 清理现有数据：移除引号、方括号等脏字符
+                cleaned = patient.raw_file_ids.replace('"', '').replace('[', '').replace(']', '')
+                existing_ids = [id.strip() for id in cleaned.split(",") if id.strip()]
             all_file_ids = list(set(existing_ids + uploaded_file_ids))
-            patient.raw_file_ids = ",".join(all_file_ids)
+            patient.raw_file_ids = ",".join(filter(None, all_file_ids))
             logger.info(f"[混合任务 {task_id}] 更新 raw_file_ids: 总共 {len(all_file_ids)} 个文件")
 
         # 提交更新
