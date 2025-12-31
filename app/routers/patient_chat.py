@@ -687,10 +687,7 @@ async def _process_chat(
             db.commit()
             
             logger.info(f"[对话任务 {task_id}] 助手回复已保存，长度: {len(full_response)}")
-        
-        progress_msg = {'status': 'processing', 'stage': 'response_completed', 'message': '回复生成完成', 'progress': 95}
-        yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
-        
+
     except Exception as e:
         logger.error(f"[对话任务 {task_id}] 对话处理失败: {str(e)}")
         import traceback
