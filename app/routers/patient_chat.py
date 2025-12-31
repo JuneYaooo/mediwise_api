@@ -86,7 +86,7 @@ async def stream_chat_processing(
         overall_start_time = time.time()
         
         # 第一条消息：确认接收
-        yield f"data: {json.dumps({'task_id': task_id, 'status': 'received', 'message': '消息已接收，正在处理...', 'progress': 0}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'task_id': task_id, 'status': 'received', 'message': '消息已接收，正在处理...', 'progress': 0}, ensure_ascii=True)}\n\n"
         await asyncio.sleep(0)
         
         logger.info(f"[对话任务 {task_id}] 开始处理，patient_id={patient_id}, conversation_id={conversation_id}")
@@ -99,7 +99,7 @@ async def stream_chat_processing(
         
         if files:
             progress_msg = {'status': 'processing', 'stage': 'file_processing', 'message': f'正在处理 {len(files)} 个文件', 'progress': 10}
-            yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(progress_msg, ensure_ascii=True)}\n\n"
             await asyncio.sleep(0)
             
             file_manager = FileProcessingManager()
@@ -140,7 +140,7 @@ async def stream_chat_processing(
                     logger.error(f"[对话任务 {task_id}] 更新患者 raw_file_ids 失败: {str(e)}")
             
             progress_msg = {'status': 'processing', 'stage': 'file_processing_completed', 'message': f'文件处理完成，已保存 {len(raw_files_data)} 个文件', 'progress': 25}
-            yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(progress_msg, ensure_ascii=True)}\n\n"
             await asyncio.sleep(0)
         
         # 构建文件信息（传递给 AI）
@@ -220,7 +220,7 @@ async def stream_chat_processing(
             }
         }
         
-        yield f"data: {json.dumps(final_result, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps(final_result, ensure_ascii=True)}\n\n"
         
         logger.info(f"[对话任务 {task_id}] 处理完成，耗时: {overall_duration:.2f}秒")
         
@@ -234,7 +234,7 @@ async def stream_chat_processing(
             "message": f"处理失败: {str(e)}",
             "error_type": type(e).__name__
         }
-        yield f"data: {json.dumps(error_msg, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps(error_msg, ensure_ascii=True)}\n\n"
 
 
 async def _process_update_data(
@@ -265,7 +265,7 @@ async def _process_update_data(
         progress_msg = {'status': 'processing', 'stage': 'data_modification', 'message': '正在修改患者数据...', 'progress': 35}
     else:
         progress_msg = {'status': 'processing', 'stage': 'data_extraction', 'message': '正在提取患者数据...', 'progress': 35}
-    yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+    yield f"data: {json.dumps(progress_msg, ensure_ascii=True)}\n\n"
     
     try:
         # 获取现有患者数据 - 直接按 patient_id 查询所有类型的数据
@@ -328,7 +328,7 @@ async def _process_update_data(
             update_crew = PatientInfoUpdateCrew()
             
             progress_msg = {'status': 'processing', 'stage': 'crew_processing', 'message': '正在分析并修改患者数据...', 'progress': 40}
-            yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(progress_msg, ensure_ascii=True)}\n\n"
             
             # 构建当前患者数据（包含 patient_content 以便 PatientInfoUpdateCrew 使用）
             # 确保所有必需的键都存在，即使值为空
@@ -375,7 +375,7 @@ async def _process_update_data(
             patient_data_crew = PatientDataCrew()
             
             progress_msg = {'status': 'processing', 'stage': 'crew_processing', 'message': '正在分析文件并提取结构化数据（可能需要5-10分钟）...', 'progress': 40}
-            yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(progress_msg, ensure_ascii=True)}\n\n"
             
             def run_crew():
                 return patient_data_crew.get_structured_patient_data(
@@ -392,11 +392,11 @@ async def _process_update_data(
         
         if "error" in result:
             error_msg = {'status': 'error', 'stage': 'crew_error', 'message': f'数据处理失败: {result["error"]}'}
-            yield f"data: {json.dumps(error_msg, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(error_msg, ensure_ascii=True)}\n\n"
             return
         
         progress_msg = {'status': 'processing', 'stage': 'data_extracted', 'message': '数据处理完成，正在保存...', 'progress': 80}
-        yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps(progress_msg, ensure_ascii=True)}\n\n"
         
         # 保存/更新结构化数据到数据库
         patient_timeline = result.get('full_structure_data', {})
@@ -419,7 +419,7 @@ async def _process_update_data(
         logger.info(f"[对话任务 {task_id}] 结构化数据已更新到 bus_patient_structured_data，更新了 {len(updated_records)} 个数据类型")
         
         progress_msg = {'status': 'processing', 'stage': 'data_saved', 'message': '患者数据已更新，正在生成确认消息...', 'progress': 90}
-        yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps(progress_msg, ensure_ascii=True)}\n\n"
         
         # 返回工具输出（结构化数据）- 先返回工具输出，再返回流式确认消息
         tool_output = {
@@ -436,7 +436,7 @@ async def _process_update_data(
                 }
             }
         }
-        yield f"data: {json.dumps(tool_output, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps(tool_output, ensure_ascii=True)}\n\n"
         
         # 使用 LLM 生成流式确认消息
         full_response = ""
@@ -453,7 +453,7 @@ async def _process_update_data(
                 'content': chunk,
                 'progress': 95
             }
-            yield f"data: {json.dumps(stream_msg, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(stream_msg, ensure_ascii=True)}\n\n"
             await asyncio.sleep(0)  # 确保流式数据及时发送
         
         # 保存助手回复（保存完整的流式内容）
@@ -475,7 +475,7 @@ async def _process_update_data(
         traceback.print_exc()
         
         error_msg = {'status': 'error', 'stage': 'update_error', 'message': f'数据更新失败: {str(e)}'}
-        yield f"data: {json.dumps(error_msg, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps(error_msg, ensure_ascii=True)}\n\n"
 
 
 async def _generate_streaming_confirmation(
@@ -598,7 +598,7 @@ async def _process_chat(
     from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
     
     progress_msg = {'status': 'processing', 'stage': 'ai_processing', 'message': '正在生成回复...', 'progress': 35}
-    yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+    yield f"data: {json.dumps(progress_msg, ensure_ascii=True)}\n\n"
     
     try:
         # 初始化 LLM
@@ -664,7 +664,7 @@ async def _process_chat(
                     'content': content,
                     'progress': 60
                 }
-                yield f"data: {json.dumps(stream_msg, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps(stream_msg, ensure_ascii=True)}\n\n"
                 await asyncio.sleep(0)  # 确保流式数据及时发送
         
         # 保存助手回复
@@ -704,7 +704,7 @@ async def _process_chat(
             'content': fallback_response,
             'progress': 90
         }
-        yield f"data: {json.dumps(stream_msg, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps(stream_msg, ensure_ascii=True)}\n\n"
         
         # 保存回退回复
         save_message(

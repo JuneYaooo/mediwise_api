@@ -386,7 +386,7 @@ async def smart_stream_patient_data_processing(
     conversation = None
     try:
         # 第一条消息：明确告知接收成功
-        yield f"data: {json.dumps({'task_id': task_id, 'status': 'received', 'message': '✅ 保存成功，系统会在后台进行自动解析并添加到患者列表中，预计10~20分钟，您可以先关闭对话框，耐心等待。', 'progress': 0}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'task_id': task_id, 'status': 'received', 'message': '✅ 保存成功，系统会在后台进行自动解析并添加到患者列表中，预计10~20分钟，您可以先关闭对话框，耐心等待。', 'progress': 0}, ensure_ascii=True)}\n\n"
         await asyncio.sleep(0)
 
         logger.info(f"[混合任务 {task_id}] 开始流式处理，patient_id={patient_id or '新建'}")
@@ -511,7 +511,7 @@ async def smart_stream_patient_data_processing(
                         break
 
                     # 实时发送进度消息
-                    yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps(progress_msg, ensure_ascii=True)}\n\n"
                     await asyncio.sleep(0)
                     task_status_store[task_id].update(progress_msg)
 
@@ -526,7 +526,7 @@ async def smart_stream_patient_data_processing(
             # 检查是否有错误
             if result_container['error']:
                 error_msg = {'status': 'error', 'message': f"文件处理失败: {result_container['error']}", 'error': result_container['error']}
-                yield f"data: {json.dumps(error_msg, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps(error_msg, ensure_ascii=True)}\n\n"
                 await asyncio.sleep(0)
                 task_status_store[task_id].update(error_msg)
                 return
@@ -539,7 +539,7 @@ async def smart_stream_patient_data_processing(
             file_processing_duration = time.time() - file_processing_start_time
 
             progress_msg = {'status': 'processing', 'stage': 'file_processing_completed', 'message': f'文件处理完成，共提取 {len(extracted_file_results)} 个文件', 'progress': 25}
-            yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(progress_msg, ensure_ascii=True)}\n\n"
             await asyncio.sleep(0)
             task_status_store[task_id].update(progress_msg)
 
@@ -595,7 +595,7 @@ async def smart_stream_patient_data_processing(
                     'message': progress_data.get('message'),
                     'progress': progress_data.get('progress')
                 }
-                yield f"data: {json.dumps(progress_msg, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps(progress_msg, ensure_ascii=True)}\n\n"
                 await asyncio.sleep(0)
 
                 # 2. 更新任务状态存储
@@ -620,7 +620,7 @@ async def smart_stream_patient_data_processing(
             logger.error(f"[混合任务 {task_id}] {error_msg}")
 
             error_response = {'status': 'error', 'message': error_msg, 'error': result['error']}
-            yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(error_response, ensure_ascii=True)}\n\n"
             await asyncio.sleep(0)
             task_status_store[task_id].update(error_response)
             return
@@ -702,7 +702,7 @@ async def smart_stream_patient_data_processing(
             }
         }
 
-        yield f"data: {json.dumps(final_result, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps(final_result, ensure_ascii=True)}\n\n"
         await asyncio.sleep(0)
         task_status_store[task_id].update(final_result)
 
@@ -738,7 +738,7 @@ async def smart_stream_patient_data_processing(
             "message": f"处理失败: {str(e)}",
             "error": str(e)
         }
-        yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps(error_response, ensure_ascii=True)}\n\n"
         await asyncio.sleep(0)
         task_status_store[task_id].update(error_response)
 
