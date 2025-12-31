@@ -32,7 +32,7 @@ API_BASE_URL = "http://182.254.240.153:9527"
 CASE_DIR = "/home/ubuntu/data/patient_case/xuguoqiang/"
 
 # ⚠️ 请在此填入要更新的患者ID（从 test_flow_simple.py 运行结果中获取）
-PATIENT_ID = "9fe7227c-1b98-4e6b-aed3-dec22172f091"  # 👈 修改这里
+PATIENT_ID = "93a0746f-e636-4b31-8ae9-ea8919512b60"  # 👈 修改这里
 
 # Token 配置 - 请替换为有效的 JWT Token（chat 接口需要鉴权）
 TEST_TOKEN = "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJ1c2VyaWQiOiI3MSIsImxvZ2lubmFtZSI6InRlc3QiLCJyZWFsbmFtZSI6Iua1i-ivlei0puWPtyIsImRlcHRpZCI6IjkiLCJkZXB0Y29kZSI6ImdhZ2JkcTB3IiwiZGVwdG5hbWUiOiLpu5jorqTlsI_nu4QiLCJkZXB0cGF0aCI6Ii8xLzgvOS8iLCJkYXRhc2NvcGUiOiI0IiwiaXN0YWciOiIwIiwibG9naW50eXBlIjoi6LSm5Y-35a-G56CBIiwicmVmcmVzaHRva2VuIjoiYzhjMDkwNzVlMzBhNDcwOWI2YTQyZDljMTJmMmQ0ODgiLCJuYmYiOjE3NjY5ODIzOTAsImV4cCI6MTc2NzU4NzE5MCwiaWF0IjoxNzY2OTgyMzkwLCJpc3MiOiJzdXZhbHVlIiwiYXVkIjoibWR0LnN1dmFsdWUuY29tIn0.oTFULgLZRGxt0mGyBLGM2krUrPEFKOYGPzbo958MozgqVnxd_Hkvom580daDFnCX4IoXP7qHdMdbq34j7xArXg"

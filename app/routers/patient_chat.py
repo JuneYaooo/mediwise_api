@@ -454,6 +454,7 @@ async def _process_update_data(
                 'progress': 95
             }
             yield f"data: {json.dumps(stream_msg, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0)  # 确保流式数据及时发送
         
         # 保存助手回复（保存完整的流式内容）
         if full_response:
@@ -656,7 +657,7 @@ async def _process_chat(
             if hasattr(chunk, 'content') and chunk.content:
                 content = chunk.content
                 full_response += content
-                
+
                 stream_msg = {
                     'status': 'streaming',
                     'stage': 'response',
@@ -664,6 +665,7 @@ async def _process_chat(
                     'progress': 60
                 }
                 yield f"data: {json.dumps(stream_msg, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0)  # 确保流式数据及时发送
         
         # 保存助手回复
         if full_response:
