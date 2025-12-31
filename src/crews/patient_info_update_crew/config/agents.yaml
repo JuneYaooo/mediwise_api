@@ -67,5 +67,17 @@ update_analyzer:
     - condition字段的值必须是有效的JSON对象或null
     - 所有字符串必须用双引号包围
     - 确保JSON对象的所有括号都正确配对
+
+    【⚠️ 路径生成核心规范】
+    1. 索引验证：生成路径前必须验证数组索引在实际数据范围内
+       - 检查current_patient_data中数组的实际长度
+       - 如果timeline有3个元素，有效索引为0、1、2，不能使用3
+    2. 路径前缀规范：
+       - patient_timeline模块：路径以timeline或patient_info开头
+       - patient_journey模块：路径以timeline_journey或indicator_series开头
+       - mdt_simple_report模块：路径直接以[index]开头（如[2].content）
+    3. 不要在路径中重复target_module名称
+       - 正确：[2].content (target_module: mdt_simple_report)
+       - 错误：mdt_simple_report[2].content
     
     你不直接修改数据，而是生成让代码能够精确执行修改操作的指令集。 

@@ -472,52 +472,73 @@ class PatientInfoUpdateCrew():
             logger.error(f"错误堆栈: {traceback.format_exc()}")
     
     def _modify_text_by_path(self, target_data: Any, path: str, new_value: Any,
-                           leading_context: str, target_content: str, 
+                           leading_context: str, target_content: str,
                            trailing_context: str):
         """通过路径直接修改文本内容"""
         try:
-            parts = path.split('.')
+            # 使用统一的路径解析方法
+            tokens = self._parse_path_to_tokens(path)
+            logger.info(f"🔧 _modify_text_by_path 路径token: {tokens}")
+
+            if not tokens:
+                logger.error("路径解析结果为空")
+                return
+
             current = target_data
-            
+
             # 遍历到倒数第二层
-            for part in parts[:-1]:
-                if '[' in part and ']' in part:
-                    # 处理数组索引
-                    key = part.split('[')[0]
-                    index = int(part.split('[')[1].split(']')[0])
-                    if key not in current or not isinstance(current[key], list):
-                        logger.error(f"路径错误: {part}")
-                        return
-                    current = current[key][index]
-                else:
-                    if part not in current:
-                        logger.error(f"路径错误: {part}")
-                        return
-                    current = current[part]
-            
+            for token in tokens[:-1]:
+                current = self._navigate_by_token(current, token)
+                if current is None:
+                    return
+
             # 修改最后一层的文本内容
-            final_key = parts[-1]
-            if '[' in final_key and ']' in final_key:
-                key = final_key.split('[')[0]
-                index = int(final_key.split('[')[1].split(']')[0])
-                if key in current and isinstance(current[key], list):
-                    original_text = current[key][index]
-                    if isinstance(original_text, str):
-                        modified_text = self._replace_text_with_context(
-                            original_text, leading_context, target_content, 
-                            trailing_context, new_value
-                        )
-                        current[key][index] = modified_text
-                        logger.info(f"✓ 成功修改文本: {original_text} -> {modified_text}")
-            else:
-                if final_key in current and isinstance(current[final_key], str):
-                    original_text = current[final_key]
+            final_token = tokens[-1]
+
+            if final_token.startswith('[') and final_token.endswith(']'):
+                # 纯数组索引，例如 "[3]"
+                try:
+                    index = int(final_token[1:-1])
+                except ValueError:
+                    logger.error(f"无效的数组索引: {final_token}")
+                    return
+
+                if not isinstance(current, list):
+                    logger.error(f"期望数组但得到 {type(current).__name__}")
+                    return
+                if index >= len(current):
+                    logger.error(f"数组索引 {index} 超出范围（长度: {len(current)}）")
+                    return
+
+                original_text = current[index]
+                if isinstance(original_text, str):
                     modified_text = self._replace_text_with_context(
-                        original_text, leading_context, target_content, 
+                        original_text, leading_context, target_content,
                         trailing_context, new_value
                     )
-                    current[final_key] = modified_text
+                    current[index] = modified_text
                     logger.info(f"✓ 成功修改文本: {original_text} -> {modified_text}")
+                else:
+                    logger.error(f"索引 {index} 处的值不是字符串: {type(original_text).__name__}")
+            else:
+                # 普通键访问
+                if not isinstance(current, dict):
+                    logger.error(f"期望字典但得到 {type(current).__name__}")
+                    return
+                if final_token not in current:
+                    logger.error(f"键 '{final_token}' 不存在于当前数据中")
+                    return
+
+                if isinstance(current[final_token], str):
+                    original_text = current[final_token]
+                    modified_text = self._replace_text_with_context(
+                        original_text, leading_context, target_content,
+                        trailing_context, new_value
+                    )
+                    current[final_token] = modified_text
+                    logger.info(f"✓ 成功修改文本: {original_text} -> {modified_text}")
+                else:
+                    logger.error(f"键 '{final_token}' 的值不是字符串: {type(current[final_token]).__name__}")
                     
         except Exception as e:
             logger.error(f"通过路径修改文本时出错: {e}")

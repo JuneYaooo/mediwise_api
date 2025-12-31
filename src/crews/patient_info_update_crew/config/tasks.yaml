@@ -23,6 +23,26 @@ analyze_and_modify_task:
       - timeline_journey是简化的时间旅程条目数组
       - indicator_series是指标数据的时间序列
     - mdt_simple_report: MDT报告的结构化内容，通常是一个数组
+
+    【⚠️ 路径索引验证规范 - 极其重要】
+    生成路径时必须严格验证数组索引：
+    1. 检查实际数据中数组的长度，索引不能超出范围
+    2. 例如：如果timeline只有3个元素(索引0-2)，则timeline[3]是无效路径
+    3. 例如：如果data_blocks只有2个元素(索引0-1)，则data_blocks[2]是无效路径
+    4. 生成路径前，必须在current_patient_data中验证每一级索引的有效性
+    5. 如果无法确定索引，优先使用基于内容搜索的方式而非硬编码索引
+
+    【路径前缀规范】
+    - 对于patient_timeline模块：路径应该以timeline或patient_info开头，不要加patient_timeline前缀
+    - 对于patient_journey模块：路径应该以timeline_journey或indicator_series开头，不要加patient_journey前缀
+    - 对于mdt_simple_report模块：路径应该直接以[index]开头访问数组元素，不要加mdt_simple_report前缀
+
+    示例：
+    - 正确：timeline[0].data_blocks[1].items[0].name (target_module: patient_timeline)
+    - 正确：timeline_journey[5].text (target_module: patient_journey)
+    - 正确：[2].content (target_module: mdt_simple_report)
+    - 错误：patient_timeline.timeline[0]... (多余的前缀)
+    - 错误：mdt_simple_report[2].content (多余的前缀)
     
     【重要：精确定位方式】
     为了精确定位JSON中的修改位置，采用两步定位法：
