@@ -315,21 +315,16 @@ def process_patient_data_background_from_task(task_id: str):
 
         # 处理成功
         overall_duration = time.time() - overall_start_time
+
         task_status_store[task_id] = {
             "status": "completed",
             "progress": 100,
             "message": "患者数据处理完成",
             "duration": overall_duration,
-            "result": {
-                "patient_id": patient.patient_id,
-                "conversation_id": conversation_id,
-                "uploaded_files_count": len(uploaded_file_ids),
-                "uploaded_file_ids": uploaded_file_ids,
-                "patient_timeline": result.get("full_structure_data", {}),
-                "patient_journey": result.get("patient_journey", {}),
-                "mdt_simple_report": result.get("mdt_simple_report", {}),
-                "patient_full_content": result.get("patient_content", "")
-            }
+            "patient_id": patient.patient_id,
+            "conversation_id": conversation_id,
+            "uploaded_files_count": len(uploaded_file_ids),
+            "uploaded_file_ids": uploaded_file_ids
         }
 
         logger.info(f"[后台任务 {task_id}] 处理完成，总耗时: {overall_duration:.2f} 秒")
@@ -699,16 +694,10 @@ async def smart_stream_patient_data_processing(
             "progress": 100,
             "duration": overall_duration,
             "is_update": False,  # 首次创建
-            "result": {
-                "patient_id": patient.patient_id,
-                "conversation_id": conversation_id,
-                "uploaded_files_count": len(uploaded_file_ids),
-                "uploaded_file_ids": uploaded_file_ids,
-                "patient_timeline": result.get("full_structure_data", {}),
-                "patient_journey": result.get("patient_journey", {}),
-                "mdt_simple_report": result.get("mdt_simple_report", {}),
-                "patient_full_content": result.get("patient_content", "")
-            }
+            "patient_id": patient.patient_id,
+            "conversation_id": conversation_id,
+            "uploaded_files_count": len(uploaded_file_ids),
+            "uploaded_file_ids": uploaded_file_ids
         }
 
         yield f"data: {json.dumps(final_result, ensure_ascii=True)}\n\n"
