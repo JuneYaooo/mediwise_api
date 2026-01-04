@@ -403,6 +403,17 @@ class FileContentExtractor:
                 if response_content.endswith("<|end_of_box|>"):
                     response_content = response_content[:-len("<|end_of_box|>")].strip()
 
+                # 处理 markdown 代码块包裹（如 ```json ... ```）
+                if response_content.startswith("```"):
+                    # 移除开头的 ```json 或 ```
+                    lines = response_content.split('\n')
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]  # 移除第一行 ```json
+                    if lines and lines[-1].strip() == "```":
+                        lines = lines[:-1]  # 移除最后一行 ```
+                    response_content = '\n'.join(lines).strip()
+                    logger.info(f"[文件: {file_name}] 已移除 markdown 代码块包裹")
+
                 logger.info(f"[文件: {file_name}] 清理后的响应内容（前200字符）: {response_content[:200]}")
 
                 # 检查 JSON 完整性（简单检查：是否以 } 结尾）
