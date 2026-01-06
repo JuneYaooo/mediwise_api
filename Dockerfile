@@ -28,18 +28,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/ && \
     pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
-# 安装 Playwright 浏览器及依赖
+# 安装 Playwright 浏览器及依赖 (同时提供 Chromium 给 Kaleido/Plotly 使用)
 RUN playwright install --with-deps chromium
 
-# 安装 Google Chrome (Kaleido 需要用于 Plotly 图表导出)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
-    gnupg \
-    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends google-chrome-stable \
-    && rm -rf /var/lib/apt/lists/*
+# 设置 Chromium 路径供 Kaleido 使用
+ENV CHROME_BIN=/root/.cache/ms-playwright/chromium-*/chrome-linux/chrome
 
 # 复制应用代码
 COPY . .
