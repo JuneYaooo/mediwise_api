@@ -95,7 +95,7 @@ jsonref==1.1.0
 jsonschema==4.25.1
 jsonschema-specifications==2025.9.1
 jusText==3.0.2
-kaleido==1.2.0
+kaleido==0.2.1
 kiwisolver==1.4.9
 kubernetes==34.1.0
 lance-namespace==0.0.20

@@ -31,8 +31,7 @@ RUN pip install --no-cache-dir --upgrade pip -i https://mirrors.aliyun.com/pypi/
 # 安装 Playwright 浏览器及依赖
 RUN playwright install --with-deps chromium
 
-# 安装 Kaleido 需要的 Chrome (使用 kaleido 自带的下载工具)
-RUN python -c "import kaleido; kaleido.get_chrome_sync()"
+# Kaleido 0.2.1 自带 Chromium，无需单独下载
 
 # 复制应用代码
 COPY . .
