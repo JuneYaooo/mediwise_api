@@ -79,8 +79,8 @@ def decode_external_token(token: str) -> Optional[Dict[str, Any]]:
             options={"verify_aud": False}
         )
 
-        # 提取 user_id（可能在 sub、user_id、userId 等字段中）
-        user_id = payload.get("sub") or payload.get("user_id") or payload.get("userId")
+        # 提取 user_id（可能在 sub、user_id、userId、userid 等字段中）
+        user_id = payload.get("sub") or payload.get("user_id") or payload.get("userId") or payload.get("userid")
 
         if user_id:
             logger.debug(f"Token 验证成功, user_id: {user_id}")
