@@ -71,8 +71,13 @@ def decode_external_token(token: str) -> Optional[Dict[str, Any]]:
     logger = BeijingLogger().get_logger()
 
     try:
-        # 尝试使用配置的算法和密钥解码
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        # 尝试使用配置的算法和密钥解码（跳过 audience 验证）
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM],
+            options={"verify_aud": False}
+        )
 
         # 提取 user_id（可能在 sub、user_id、userId 等字段中）
         user_id = payload.get("sub") or payload.get("user_id") or payload.get("userId")

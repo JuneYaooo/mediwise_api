@@ -8,10 +8,10 @@ PPT API 测试脚本
 import requests
 import json
 
-BASE_URL = "http://182.254.240.153:9527"  # "http://localhost:9527"
+BASE_URL = "http://120.27.196.178:9527"#"http://182.254.240.153:9527"  # "http://localhost:9527"
 
 # Token 配置 - 请替换为有效的 JWT Token
-TEST_TOKEN = "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJ1c2VyaWQiOiI3MSIsImxvZ2lubmFtZSI6InRlc3QiLCJyZWFsbmFtZSI6Iua1i-ivlei0puWPtyIsImRlcHRpZCI6IjkiLCJkZXB0Y29kZSI6ImdhZ2JkcTB3IiwiZGVwdG5hbWUiOiLpu5jorqTlsI_nu4QiLCJkZXB0cGF0aCI6Ii8xLzgvOS8iLCJkYXRhc2NvcGUiOiI0IiwiaXN0YWciOiIwIiwibG9naW50eXBlIjoi6LSm5Y-35a-G56CBIiwicmVmcmVzaHRva2VuIjoiYzhjMDkwNzVlMzBhNDcwOWI2YTQyZDljMTJmMmQ0ODgiLCJuYmYiOjE3NjY5ODIzOTAsImV4cCI6MTc2NzU4NzE5MCwiaWF0IjoxNzY2OTgyMzkwLCJpc3MiOiJzdXZhbHVlIiwiYXVkIjoibWR0LnN1dmFsdWUuY29tIn0.oTFULgLZRGxt0mGyBLGM2krUrPEFKOYGPzbo958MozgqVnxd_Hkvom580daDFnCX4IoXP7qHdMdbq34j7xArXg"
+TEST_TOKEN = "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJ1c2VyaWQiOiI3NSIsImxvZ2lubmFtZSI6ImRlbW8iLCJyZWFsbmFtZSI6IuekuuS-iyIsImRlcHRpZCI6IjkiLCJkZXB0Y29kZSI6ImdhZ2JkcTB3IiwiZGVwdG5hbWUiOiLpu5jorqTlsI_nu4QiLCJkZXB0cGF0aCI6Ii8xLzgvOS8iLCJkYXRhc2NvcGUiOiI0IiwiaXN0YWciOiIwIiwibG9naW50eXBlIjoi6LSm5Y-35a-G56CBIiwicmVmcmVzaHRva2VuIjoiNTliYjgyODlmYTRjNDRkODliOGVkMDFjZmM3Y2Q1NTMiLCJuYmYiOjE3Njc3NjUzNjUsImV4cCI6MTc2ODM3MDE2NSwiaWF0IjoxNzY3NzY1MzY1LCJpc3MiOiJzdXZhbHVlIiwiYXVkIjoibWR0LnN1dmFsdWUuY29tIn0.oITqLsHMtQTDG6pzfY2W75J6kFdGninaA-h2emkxFZNbLEPpdczEcveuefAKR6YAi51pbyhloYK_vi-SVEVi7Q"
 
 def get_auth_headers():
     """获取带认证的请求头"""
@@ -129,7 +129,7 @@ if __name__ == "__main__":
     # ========================================
 
     # 配置1: 指定要测试的 patient_id（必填）
-    PATIENT_ID = "685f1678-8260-41fa-8b7c-660c299bf44b"  # 👈 修改为实际的患者ID
+    PATIENT_ID = "93a0746f-e636-4b31-8ae9-ea8919512b60"  # 👈 修改为实际的患者ID
 
     # 配置2: 是否要生成 PPT
     GENERATE_PPT = True  # True: 测试获取数据 + 生成PPT, False: 只测试获取数据
