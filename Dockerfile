@@ -28,11 +28,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/ && \
     pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
-# 安装 Playwright 浏览器及依赖 (同时提供 Chromium 给 Kaleido/Plotly 使用)
+# 安装 Playwright 浏览器及依赖
 RUN playwright install --with-deps chromium
 
-# 设置 Chromium 路径供 Kaleido 使用
-ENV CHROME_BIN=/root/.cache/ms-playwright/chromium-*/chrome-linux/chrome
+# 安装 Kaleido 需要的 Chrome (使用 kaleido 自带的下载工具)
+RUN python -c "import kaleido; kaleido.get_chrome_sync()"
 
 # 复制应用代码
 COPY . .
