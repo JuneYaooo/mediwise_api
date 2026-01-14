@@ -12,6 +12,7 @@ import base64
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from src.utils.logger import BeijingLogger
+from src.utils.font_config import FontConfig
 
 logger = BeijingLogger().get_logger()
 
@@ -76,11 +77,11 @@ class TreatmentGanttChartGenerator:
         Args:
             font_copy_path: 字体文件副本路径（与HTML在同一目录，避免跨域问题）
         """
-        # 使用指定的中文字体路径
-        font_path = Path("/home/ubuntu/font/SiYuanHeiTi-Regular/SourceHanSansSC-Regular-2.otf")
+        # 使用统一的字体配置查找字体
+        font_path = FontConfig.find_font()
 
-        if not font_path.exists():
-            logger.warning(f"指定的字体文件不存在: {font_path}，将尝试查找其他字体")
+        if not font_path:
+            # 尝试从本地 static 目录查找
             font_path = self._find_chinese_font()
 
             if not font_path:
@@ -89,12 +90,7 @@ class TreatmentGanttChartGenerator:
 
         try:
             # 确定字体格式
-            font_format = {
-                '.ttf': 'truetype',
-                '.otf': 'opentype',
-                '.woff': 'woff',
-                '.woff2': 'woff2'
-            }.get(font_path.suffix.lower(), 'truetype')
+            font_format = FontConfig.get_font_format(font_path)
 
             # 如果提供了字体副本路径，使用相对路径引用（避免base64编码导致HTML过大）
             if font_copy_path:
@@ -190,11 +186,14 @@ body, * {
         import os
         import tempfile
 
-        chinese_font_path = "/home/ubuntu/font/SiYuanHeiTi-Regular/SourceHanSansSC-Regular-2.otf"
+        # 使用统一的字体配置查找字体
+        font_path = FontConfig.find_font()
 
-        if not Path(chinese_font_path).exists():
-            logger.warning(f"字体文件不存在: {chinese_font_path}")
+        if not font_path:
+            logger.warning("未找到可用字体，将使用 Arial")
             return "Arial", None
+
+        chinese_font_path = str(font_path)
 
         # 创建临时 fontconfig 配置
         fontconfig_dir = tempfile.mkdtemp(prefix="plotly_fonts_")
@@ -204,7 +203,7 @@ body, * {
         fonts_conf_content = f"""<?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 <fontconfig>
-  <dir>{Path(chinese_font_path).parent}</dir>
+  <dir>{font_path.parent}</dir>
   <match target="pattern">
     <test qual="any" name="family">
       <string>sans-serif</string>
@@ -657,15 +656,15 @@ body, * {
             temp_dir = Path(tempfile.mkdtemp())
 
             # 复制字体文件到临时目录（避免base64编码导致HTML过大）
-            font_path = Path("/home/ubuntu/font/SiYuanHeiTi-Regular/SourceHanSansSC-Regular-2.otf")
-            if font_path.exists():
+            font_path = FontConfig.find_font()
+            if font_path:
                 import shutil
                 temp_font_path = temp_dir / font_path.name
                 shutil.copy(font_path, temp_font_path)
                 logger.info(f"已复制字体文件到临时目录: {temp_font_path}")
             else:
                 temp_font_path = None
-                logger.warning(f"字体文件不存在，将使用系统字体: {font_path}")
+                logger.warning("未找到字体文件，将使用系统字体")
 
             # 准备 HTML（传入字体副本路径）
             html_content = self._prepare_html(gantt_data, patient_name, temp_font_path)

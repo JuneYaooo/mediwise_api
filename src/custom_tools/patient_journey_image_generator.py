@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from playwright.async_api import async_playwright
 from src.utils.logger import BeijingLogger
+from src.utils.font_config import FontConfig
 
 logger = BeijingLogger().get_logger()
 
@@ -51,11 +52,11 @@ class PatientJourneyImageGenerator:
 
     def _generate_font_face_css(self) -> str:
         """生成@font-face CSS代码"""
-        # 使用指定的中文字体路径
-        font_path = Path("/home/ubuntu/font/SiYuanHeiTi-Regular/SourceHanSansSC-Regular-2.otf")
+        # 使用统一的字体配置查找字体
+        font_path = FontConfig.find_font()
 
-        if not font_path.exists():
-            logger.warning(f"指定的字体文件不存在: {font_path}，将尝试查找其他字体")
+        if not font_path:
+            # 尝试从本地 static 目录查找
             font_path = self._find_chinese_font()
 
             if not font_path:
@@ -70,12 +71,7 @@ class PatientJourneyImageGenerator:
             font_base64 = base64.b64encode(font_data).decode('utf-8')
 
             # 确定字体格式
-            font_format = {
-                '.ttf': 'truetype',
-                '.otf': 'opentype',
-                '.woff': 'woff',
-                '.woff2': 'woff2'
-            }.get(font_path.suffix.lower(), 'truetype')
+            font_format = FontConfig.get_font_format(font_path)
 
             css = f'''
 @font-face {{
