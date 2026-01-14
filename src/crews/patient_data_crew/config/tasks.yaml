@@ -267,6 +267,7 @@ extract_core_points_task:
     - 关键词（如疾病名、治疗方式、关键结论）需**加粗**。
     - 事件类型仅二选一：主疾病/共病；若与主诊断直接相关则判为主疾病，否则为共病。
     - 日期尽量标准化为yyyy-MM-dd；当仅有月份或相对时间时，尽量推断具体日期，无法确定则使用当前日期。
+    - 每个事件需提取来源文件UUID：从full_structure_data的timeline中找到对应时间点的data_blocks.items，提取其file_uuid字段，以{{"file_uuid": "xxx"}}格式放入sources数组。如果一个事件涉及多个来源文件，将所有相关来源放入数组。如果无法确定来源或原始数据中没有file_uuid，则sources为空数组。
 
   expected_output: >
     返回JSON，包含两个顶级字段timeline_journey和indicator_series：
@@ -279,7 +280,8 @@ extract_core_points_task:
           "type": "主疾病|共病",
           "text": "不超过100字；**关键词加粗**；异常值用<span style=\"color:#d0021b\">值</span>标红",
           "chief_surgeon": "如果是手术事件，且有主刀医生信息，才需要提取主刀医生的名字，否则为空",
-          "examination_hospital": "如果是胃肠镜等大型检查事件，且有检查所在医院信息，才需要提取医院名称，否则为空"
+          "examination_hospital": "如果是胃肠镜等大型检查事件，且有检查所在医院信息，才需要提取医院名称，否则为空",
+          "sources": [{{"file_uuid": "来源文件UUID"}}]  // 来源文件数组，从full_structure_data中对应事件的file_uuid提取，可为空数组
         }}
       ],
       "indicator_series": [
