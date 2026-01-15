@@ -176,7 +176,7 @@ class PPTGenerationCrew():
 
     def _generate_ppt_data_with_llm(self, patient_timeline, raw_files_data, patient_name,
                                      patient_journey_image_url, indicator_chart_images,
-                                     treatment_gantt_chart_url, gantt_data=None, template_type=2):
+                                     treatment_gantt_chart_url, treatment_gantt_data=None, template_type=2):
         """
         使用LLM直接生成PPT数据（不使用Agent流程）
 
@@ -187,7 +187,7 @@ class PPTGenerationCrew():
             patient_journey_image_url: 患者时间旅程图片URL
             indicator_chart_images: 核心指标趋势图片列表
             treatment_gantt_chart_url: 治疗甘特图URL
-            gantt_data: 治疗甘特图数据列表（source_file 已替换为文件名）
+            treatment_gantt_data: 治疗甘特图数据列表（source_file 已替换为文件名）
             template_type: 模板类型（默认2）
 
         Returns:
@@ -216,9 +216,9 @@ class PPTGenerationCrew():
             import json
 
             # 构建治疗甘特图数据说明
-            gantt_data_str = ""
-            if gantt_data:
-                gantt_data_str = f"\n\n**治疗甘特图数据** (包含每条治疗的详细信息，source_file 已替换为文件名):\n{json.dumps(gantt_data, ensure_ascii=False, indent=2)}"
+            treatment_gantt_data_str = ""
+            if treatment_gantt_data:
+                treatment_gantt_data_str = f"\n\n**治疗甘特图数据** (包含每条治疗的详细信息，source_file 已替换为文件名):\n{json.dumps(treatment_gantt_data, ensure_ascii=False, indent=2)}"
 
             prompt = f"""你是一个医疗数据转换专家，需要将患者数据转换为Suvalue PPT模板格式。
 
@@ -230,7 +230,7 @@ class PPTGenerationCrew():
 **患者数据**:
 患者姓名: {patient_name}
 患者时间轴数据: {json.dumps(patient_timeline, ensure_ascii=False)}
-原始文件数据: {json.dumps(raw_files_data, ensure_ascii=False)}\n\n{gantt_data_str}
+原始文件数据: {json.dumps(raw_files_data, ensure_ascii=False)}\n\n{treatment_gantt_data_str}
 
 **预生成的图表URL** (优先使用这些):
 - 患者时间旅程图: {patient_journey_image_url or "未生成"}
@@ -524,7 +524,28 @@ class PPTGenerationCrew():
                     import traceback
                     logger.error(traceback.format_exc())
 
-            # ========== 生成治疗甘特图并上传到七牛云 ==========
+            # ========== 处理治疗甘特图数据并生成图片上传到七牛云 ==========
+            #
+            # 治疗甘特图数据处理流程：
+            # 1. 从 patient_timeline 或 patient_journey 中提取治疗数据
+            # 2. 使用 TreatmentDataProcessor 处理数据，生成甘特图所需格式 (gantt_data)
+            # 3. 构建 file_uuid -> filename 映射，将 gantt_data 中的 source_file (UUID) 替换为文件名
+            # 4. 调用 generate_treatment_gantt_chart_sync 生成甘特图图片 (使用 ECharts 本地渲染)
+            # 5. 上传图片到七牛云，获取 treatment_gantt_chart_url
+            #
+            # gantt_data 数据结构示例（处理后的原始数据，可直接传给PPT模板）：
+            # [
+            #   {
+            #     "treatment_name": "治疗名称",           # 治疗方案名称
+            #     "start_date": "2024-01-01",           # 开始日期 (YYYY-MM-DD)
+            #     "end_date": "2024-01-15",             # 结束日期 (YYYY-MM-DD)
+            #     "category": "化疗/放疗/手术/靶向治疗等", # 治疗类别
+            #     "source_file": "来源文件名.pdf",       # 来源文件名（已从UUID转换）
+            #     "details": "治疗详情描述"              # 治疗详细信息
+            #   },
+            #   ...
+            # ]
+            #
             treatment_gantt_chart_url = None
             treatment_gantt_chart_path = None
             source_file_mapping = {}  # 存储 file_uuid -> filename 的映射
@@ -630,8 +651,8 @@ class PPTGenerationCrew():
             try:
                 patient_timeline_json = json.dumps(patient_timeline, ensure_ascii=False, default=str)
                 processed_files_json = json.dumps(processed_raw_files_data, ensure_ascii=False, default=str)
-                # 新增：序列化 gantt_data (已包含 source_file 文件名)
-                gantt_data_json = json.dumps(gantt_data if 'gantt_data' in locals() else [], ensure_ascii=False, default=str)
+                # 新增：序列化 treatment_gantt_data (已包含 source_file 文件名)
+                treatment_gantt_data_json = json.dumps(gantt_data if 'gantt_data' in locals() else [], ensure_ascii=False, default=str)
             except Exception as e:
                 logger.error(f"JSON序列化失败: {str(e)}")
                 return {"success": False, "error": f"数据序列化失败: {str(e)}"}
@@ -649,7 +670,7 @@ class PPTGenerationCrew():
                     "patient_journey_image_url": patient_journey_image_url or "",
                     "indicator_chart_images": json.dumps(indicator_chart_images, ensure_ascii=False),
                     "treatment_gantt_chart_url": treatment_gantt_chart_url or "",
-                    "gantt_data": gantt_data_json  # 新增：治疗甘特图数据（source_file 已替换为文件名）
+                    "treatment_gantt_data": treatment_gantt_data_json  # 新增：治疗甘特图数据（source_file 已替换为文件名）
                 }
             else:
                 # 本地模式
@@ -681,7 +702,7 @@ class PPTGenerationCrew():
                     "indicator_chart_images": json.dumps(indicator_chart_images, ensure_ascii=False),
                     "treatment_gantt_chart_url": treatment_gantt_chart_url or "",
                     "treatment_gantt_chart_path": treatment_gantt_chart_path,
-                    "gantt_data": gantt_data_json  # 新增：治疗甘特图数据（source_file 已替换为文件名）
+                    "treatment_gantt_data": treatment_gantt_data_json  # 新增：治疗甘特图数据（source_file 已替换为文件名）
                 }
 
             # 根据模式选择执行不同的任务
@@ -703,7 +724,7 @@ class PPTGenerationCrew():
                     patient_journey_image_url=patient_journey_image_url,
                     indicator_chart_images=indicator_chart_images,
                     treatment_gantt_chart_url=treatment_gantt_chart_url,
-                    gantt_data=gantt_data if 'gantt_data' in locals() else None,
+                    treatment_gantt_data=gantt_data if 'gantt_data' in locals() else None,
                     template_type=2
                 )
 
@@ -717,7 +738,7 @@ class PPTGenerationCrew():
 
                 if ppt_info and ppt_info.get("success"):
                     logger.info(f"✅ 直接LLM调用流程成功: ppt_url={ppt_info.get('ppt_url')}")
-                    # 添加 gantt_data 和 ppt_data 到返回结果
+                    # 添加 treatment_gantt_data 和 ppt_data 到返回结果
                     ppt_info["treatment_gantt_data"] = gantt_data if 'gantt_data' in locals() else []
                     ppt_info["ppt_data"] = ppt_data
                     return ppt_info
