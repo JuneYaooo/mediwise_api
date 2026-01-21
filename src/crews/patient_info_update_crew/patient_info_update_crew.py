@@ -927,11 +927,26 @@ class PatientInfoUpdateCrew():
             current_date = datetime.now().strftime("%Y-%m-%d")
 
             # 🆕 初始化Token管理和数据压缩模块（可选功能）
-            # 通过环境变量 ENABLE_DATA_COMPRESSION 控制是否启用数据压缩
-            enable_compression = os.getenv('ENABLE_DATA_COMPRESSION', 'false').lower() in ('true', '1', 'yes')
+            # 优先使用主开关 ENABLE_NEW_FEATURES，如果未设置则使用 ENABLE_DATA_COMPRESSION
+            enable_new_features = os.getenv('ENABLE_NEW_FEATURES', '').lower()
+
+            if enable_new_features in ('true', '1', 'yes'):
+                # 主开关启用 - 启用所有新功能
+                enable_compression = True
+                logger.info("✅ 主开关已启用 (ENABLE_NEW_FEATURES=true)，将使用所有新功能")
+            elif enable_new_features in ('false', '0', 'no'):
+                # 主开关禁用 - 使用原有逻辑
+                enable_compression = False
+                logger.info("ℹ️ 主开关已禁用 (ENABLE_NEW_FEATURES=false)，使用原有逻辑")
+            else:
+                # 未设置主开关 - 使用细粒度控制
+                enable_compression = os.getenv('ENABLE_DATA_COMPRESSION', 'false').lower() in ('true', '1', 'yes')
+                if enable_compression:
+                    logger.info("✅ 数据压缩功能已启用 (ENABLE_DATA_COMPRESSION=true)")
+                else:
+                    logger.info("ℹ️ 数据压缩功能未启用（使用原有逻辑），可通过 ENABLE_NEW_FEATURES=true 或 ENABLE_DATA_COMPRESSION=true 启用")
 
             if not enable_compression:
-                logger.info("ℹ️ 数据压缩功能未启用（使用原有逻辑），可通过 ENABLE_DATA_COMPRESSION=true 启用")
                 # 直接使用原始数据，不压缩
                 compressed_patient_data = current_patient_data
             else:

@@ -39,22 +39,45 @@
 
 ## ⚙️ 配置方法
 
-### 方式1: 环境变量配置（推荐）
+### 🎯 方式1: 主开关配置（推荐）
 
-在 `.env` 文件中添加：
+**最简单的方式** - 使用一个开关控制所有新功能：
 
 ```bash
-# 启用数据压缩功能
-ENABLE_DATA_COMPRESSION=true
+# 在 .env 文件中添加：
 
-# 启用分块输出功能
-# 可选值: true (强制启用), false (强制禁用), auto (自动检测)
-ENABLE_CHUNKED_OUTPUT=auto
+# 使用原有逻辑（默认）
+ENABLE_NEW_FEATURES=false
+
+# 或启用所有新功能
+ENABLE_NEW_FEATURES=true
 ```
 
-### 方式2: 系统环境变量
+**说明**:
+- `ENABLE_NEW_FEATURES=false` (默认): 全部使用原有逻辑
+- `ENABLE_NEW_FEATURES=true`: 启用所有新功能（数据压缩 + 分块输出）
+- 主开关会覆盖下面的细粒度控制
+
+### ⚙️ 方式2: 细粒度配置（高级）
+
+如果需要单独控制某个功能，可以注释掉主开关，使用细粒度控制：
 
 ```bash
+# 注释掉主开关
+# ENABLE_NEW_FEATURES=false
+
+# 单独控制数据压缩
+ENABLE_DATA_COMPRESSION=true
+
+# 单独控制分块输出
+ENABLE_CHUNKED_OUTPUT=auto  # 可选值: true, false, auto
+```
+
+### 方式3: 系统环境变量
+
+```bash
+export ENABLE_NEW_FEATURES=true
+# 或
 export ENABLE_DATA_COMPRESSION=true
 export ENABLE_CHUNKED_OUTPUT=auto
 ```
@@ -63,13 +86,45 @@ export ENABLE_CHUNKED_OUTPUT=auto
 
 ## 📖 使用示例
 
-### 示例1: 启用数据压缩
+### 示例1: 使用主开关 - 全部启用新功能（推荐）
 
-**场景**: 处理大量患者数据时，token消耗过高
+**场景**: 想要使用所有新功能来优化性能和质量
 
 **配置**:
 ```bash
+ENABLE_NEW_FEATURES=true
+```
+
+**效果**:
+- ✅ 数据压缩自动启用
+- ✅ 分块输出自动启用
+- ✅ 所有crew都使用新功能
+
+### 示例2: 使用主开关 - 全部使用原有逻辑（默认）
+
+**场景**: 保持系统稳定，不使用任何新功能
+
+**配置**:
+```bash
+ENABLE_NEW_FEATURES=false  # 或不设置（默认）
+```
+
+**效果**:
+- ✅ 所有crew使用原有逻辑
+- ✅ 行为与之前完全一致
+
+### 示例3: 细粒度控制 - 只启用数据压缩
+
+**场景**: 只想减少token消耗，不需要分块输出
+
+**配置**:
+```bash
+# 注释掉或不设置主开关
+# ENABLE_NEW_FEATURES=false
+
+# 只启用数据压缩
 ENABLE_DATA_COMPRESSION=true
+ENABLE_CHUNKED_OUTPUT=false
 ```
 
 **效果**:
@@ -80,47 +135,49 @@ ENABLE_DATA_COMPRESSION=true
 节省成本: 56.25%
 ```
 
-### 示例2: 启用分块输出
+### 示例4: 细粒度控制 - 自动检测分块输出
 
-**场景**: PPT生成时出现逻辑矛盾（如诊断是高血压，但治疗方案是降糖药）
+**场景**: 数据压缩不需要，但希望系统自动判断是否需要分块
 
 **配置**:
 ```bash
-ENABLE_CHUNKED_OUTPUT=true
+# 注释掉或不设置主开关
+# ENABLE_NEW_FEATURES=false
+
+ENABLE_DATA_COMPRESSION=false
+ENABLE_CHUNKED_OUTPUT=auto  # 自动检测
 ```
 
 **效果**:
-- 分块1生成: 诊断 = "高血压"
-- 分块2生成: 看到诊断是"高血压" → 治疗 = "降压药"（正确）
-- 逻辑一致性: ✅
-
-### 示例3: 自动检测模式（默认）
-
-**场景**: 让系统自动判断是否需要分块输出
-
-**配置**:
-```bash
-ENABLE_CHUNKED_OUTPUT=auto  # 或不设置（默认值）
-```
-
-**行为**:
-- 系统估算输出大小
-- 如果预期输出 > 安全限制的80%，自动启用分块输出
-- 否则使用原有逻辑
+- 小数据: 使用原有逻辑
+- 大数据: 自动启用分块输出
 
 ---
 
 ## 🔍 日志说明
 
+### 主开关日志
+
+**主开关启用时**:
+```
+✅ 主开关已启用 (ENABLE_NEW_FEATURES=true)，将使用所有新功能
+```
+
+**主开关禁用时**:
+```
+ℹ️ 主开关已禁用 (ENABLE_NEW_FEATURES=false)，使用原有逻辑
+```
+
 ### 数据压缩日志
 
 **未启用时**:
 ```
-ℹ️ 数据压缩功能未启用（使用原有逻辑），可通过 ENABLE_DATA_COMPRESSION=true 启用
+ℹ️ 数据压缩功能未启用（使用原有逻辑），可通过 ENABLE_NEW_FEATURES=true 或 ENABLE_DATA_COMPRESSION=true 启用
 ```
 
 **启用时**:
 ```
+✅ 数据压缩功能已启用 (ENABLE_DATA_COMPRESSION=true)
 ✅ 已初始化数据压缩和分块生成工具（新功能已启用）
 📊 患者数据统计:
   ├─ 估算总tokens: 80000
@@ -142,6 +199,12 @@ ENABLE_CHUNKED_OUTPUT=auto  # 或不设置（默认值）
 ```
 
 ### 分块输出日志
+
+**主开关启用时**:
+```
+✅ 主开关已启用 (ENABLE_NEW_FEATURES=true)，将使用分块输出
+⚠️ 启用分块输出模式（带上下文传递）
+```
 
 **自动检测（不需要分块）**:
 ```
@@ -274,6 +337,13 @@ ENABLE_CHUNKED_OUTPUT=auto  # 或不设置（默认值）
 
 ### 生产环境（推荐）
 
+**方案1: 使用主开关（最简单）**
+```bash
+# 启用所有新功能
+ENABLE_NEW_FEATURES=true
+```
+
+**方案2: 细粒度控制（更灵活）**
 ```bash
 # 启用数据压缩，减少成本
 ENABLE_DATA_COMPRESSION=true
@@ -285,15 +355,15 @@ ENABLE_CHUNKED_OUTPUT=auto
 ### 开发/测试环境
 
 ```bash
-# 关闭新功能，使用原有逻辑
-ENABLE_DATA_COMPRESSION=false
-ENABLE_CHUNKED_OUTPUT=false
+# 使用原有逻辑（默认）
+ENABLE_NEW_FEATURES=false
+
+# 或不设置任何环境变量（默认行为）
 ```
 
 ### 高质量要求场景
 
 ```bash
 # 启用所有优化
-ENABLE_DATA_COMPRESSION=true
-ENABLE_CHUNKED_OUTPUT=true
+ENABLE_NEW_FEATURES=true
 ```

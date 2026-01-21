@@ -920,32 +920,44 @@ class PPTGenerationCrew():
                 # ========== 检查是否需要分块输出 ==========
                 model_name = 'gemini-3-flash-preview'
 
-                # 🆕 通过环境变量控制是否启用分块输出（默认启用自动检测）
-                enable_chunked_output = os.getenv('ENABLE_CHUNKED_OUTPUT', 'auto').lower()
+                # 🆕 优先使用主开关 ENABLE_NEW_FEATURES，如果未设置则使用 ENABLE_CHUNKED_OUTPUT
+                enable_new_features = os.getenv('ENABLE_NEW_FEATURES', '').lower()
 
-                use_chunked_output = False
-                if enable_chunked_output == 'true' or enable_chunked_output == '1' or enable_chunked_output == 'yes':
-                    # 强制启用分块输出
+                if enable_new_features in ('true', '1', 'yes'):
+                    # 主开关启用 - 启用分块输出
                     use_chunked_output = True
-                    logger.info("ℹ️ 分块输出已强制启用（ENABLE_CHUNKED_OUTPUT=true）")
-                elif enable_chunked_output == 'false' or enable_chunked_output == '0' or enable_chunked_output == 'no':
-                    # 强制禁用分块输出
+                    logger.info("✅ 主开关已启用 (ENABLE_NEW_FEATURES=true)，将使用分块输出")
+                elif enable_new_features in ('false', '0', 'no'):
+                    # 主开关禁用 - 使用原有逻辑
                     use_chunked_output = False
-                    logger.info("ℹ️ 分块输出已禁用（ENABLE_CHUNKED_OUTPUT=false），使用原有逻辑")
+                    logger.info("ℹ️ 主开关已禁用 (ENABLE_NEW_FEATURES=false)，使用原有逻辑")
                 else:
-                    # 自动检测（默认行为）
-                    # 估算输出大小
-                    estimated_output_size = output_chunked_generator.estimate_output_size({
-                        'patient_timeline': patient_timeline,
-                        'raw_files_data': processed_raw_files_data
-                    })
+                    # 未设置主开关 - 使用细粒度控制
+                    enable_chunked_output = os.getenv('ENABLE_CHUNKED_OUTPUT', 'auto').lower()
 
-                    # 检查是否需要分块输出
-                    use_chunked_output = output_chunked_generator.should_use_chunked_output(
-                        model_name=model_name,
-                        expected_output_size=estimated_output_size
-                    )
-                    logger.info(f"ℹ️ 自动检测分块输出需求: {use_chunked_output} (预期输出: {estimated_output_size} tokens)")
+                    use_chunked_output = False
+                    if enable_chunked_output == 'true' or enable_chunked_output == '1' or enable_chunked_output == 'yes':
+                        # 强制启用分块输出
+                        use_chunked_output = True
+                        logger.info("ℹ️ 分块输出已强制启用（ENABLE_CHUNKED_OUTPUT=true）")
+                    elif enable_chunked_output == 'false' or enable_chunked_output == '0' or enable_chunked_output == 'no':
+                        # 强制禁用分块输出
+                        use_chunked_output = False
+                        logger.info("ℹ️ 分块输出已禁用（ENABLE_CHUNKED_OUTPUT=false），使用原有逻辑")
+                    else:
+                        # 自动检测（默认行为）
+                        # 估算输出大小
+                        estimated_output_size = output_chunked_generator.estimate_output_size({
+                            'patient_timeline': patient_timeline,
+                            'raw_files_data': processed_raw_files_data
+                        })
+
+                        # 检查是否需要分块输出
+                        use_chunked_output = output_chunked_generator.should_use_chunked_output(
+                            model_name=model_name,
+                            expected_output_size=estimated_output_size
+                        )
+                        logger.info(f"ℹ️ 自动检测分块输出需求: {use_chunked_output} (预期输出: {estimated_output_size} tokens)")
 
                 if use_chunked_output:
                     logger.warning("=" * 100)
