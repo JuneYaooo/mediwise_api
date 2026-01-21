@@ -25,7 +25,8 @@ from src.utils.data_compressor import PatientDataCompressor
 from src.utils.chunked_processor import ChunkedPPTProcessor
 from src.utils.llm_retry_handler import LLMRetryHandler, TokenLimitError
 from src.utils.output_completeness_guard import OutputCompletenessGuard
-from src.utils.output_chunked_generator import OutputChunkedGenerator
+from src.utils.output_chunked_generator import OutputChunkedGenerator  # 旧版分块生成器（待替换）
+from src.utils.universal_chunked_generator import UniversalChunkedGenerator  # 🆕 新版分块生成器（带上下文传递）
 
 # 初始化 logger
 logger = BeijingLogger().get_logger()
@@ -224,7 +225,7 @@ class PPTGenerationCrew():
             # ========== 检查是否需要分块输出 ==========
             if use_chunked_output:
                 logger.info("=" * 100)
-                logger.info("🔀 使用分块输出模式")
+                logger.info("🔀 使用分块输出模式（带上下文传递）")
                 logger.info("=" * 100)
 
                 # 准备患者数据
@@ -238,17 +239,16 @@ class PPTGenerationCrew():
                     'treatment_gantt_chart_url': treatment_gantt_chart_url
                 }
 
-                # 使用分块生成器
-                from src.utils.output_chunked_generator import OutputChunkedGenerator
-                from src.utils.token_manager import TokenManager
-
+                # 🆕 使用新版分块生成器（带上下文传递）
                 token_manager = TokenManager(logger=logger)
-                chunked_generator = OutputChunkedGenerator(logger=logger, token_manager=token_manager)
+                chunked_generator = UniversalChunkedGenerator(logger=logger, token_manager=token_manager)
 
-                ppt_data = chunked_generator.generate_ppt_in_chunks(
+                # 使用 generate_in_chunks 方法（支持上下文传递）
+                ppt_data = chunked_generator.generate_in_chunks(
                     llm=document_generation_llm,
-                    patient_data=patient_data,
-                    template_info=template_info,
+                    task_type='ppt_generation',
+                    input_data=patient_data,
+                    template_or_schema=template_json_str,
                     model_name='gemini-3-flash-preview'
                 )
 
