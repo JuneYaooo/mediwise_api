@@ -303,11 +303,21 @@ class PatientDataCrew():
             # 设置当前日期
             current_date = datetime.now().strftime("%Y-%m-%d")
 
-            # 🆕 初始化数据压缩和分块生成工具
-            token_manager = TokenManager(logger=logger)
-            data_compressor = PatientDataCompressor(logger=logger, token_manager=token_manager)
-            chunked_generator = UniversalChunkedGenerator(logger=logger, token_manager=token_manager)
-            logger.info("✅ 已初始化数据压缩和分块生成工具")
+            # 🆕 初始化数据压缩和分块生成工具（可选功能）
+            # 通过环境变量 ENABLE_DATA_COMPRESSION 控制是否启用数据压缩
+            enable_compression = os.getenv('ENABLE_DATA_COMPRESSION', 'false').lower() in ('true', '1', 'yes')
+
+            token_manager = None
+            data_compressor = None
+            chunked_generator = None
+
+            if enable_compression:
+                token_manager = TokenManager(logger=logger)
+                data_compressor = PatientDataCompressor(logger=logger, token_manager=token_manager)
+                chunked_generator = UniversalChunkedGenerator(logger=logger, token_manager=token_manager)
+                logger.info("✅ 已初始化数据压缩和分块生成工具（新功能已启用）")
+            else:
+                logger.info("ℹ️ 数据压缩功能未启用（使用原有逻辑），可通过 ENABLE_DATA_COMPRESSION=true 启用")
 
             # 🚨 修改：使用传入的existing_patient_data参数而不是从本地文件加载
             existing_timeline = None
@@ -615,16 +625,22 @@ class PatientDataCrew():
             # 发送进度更新
             yield {"type": "progress", "stage": "disease_config", "message": "正在识别疾病配置", "progress": 35}
 
-            # 🆕 压缩患者信息数据
-            compressed_patient_info = data_compressor.compress_data(
-                preprocessed_info,
-                max_tokens=50000,
-                model_name='deepseek-chat'
-            )
-            logger.info(f"✅ 患者信息压缩完成: {len(preprocessed_info)} → {len(compressed_patient_info)} 字符")
+            # 🆕 压缩患者信息数据（可选功能，默认不启用）
+            compressed_patient_info = preprocessed_info  # 默认使用原始数据
+            if enable_compression and data_compressor:
+                try:
+                    compressed_patient_info = data_compressor.compress_data(
+                        preprocessed_info,
+                        max_tokens=50000,
+                        model_name='deepseek-chat'
+                    )
+                    logger.info(f"✅ 患者信息压缩完成: {len(preprocessed_info)} → {len(compressed_patient_info)} 字符")
+                except Exception as e:
+                    logger.warning(f"⚠️ 数据压缩失败，使用原始数据: {e}")
+                    compressed_patient_info = preprocessed_info
 
             disease_config_inputs = {
-                "patient_info": compressed_patient_info  # 🆕 使用压缩后的数据
+                "patient_info": compressed_patient_info  # 使用压缩后的数据（如果启用）或原始数据
             }
             self.get_disease_config_task().interpolate_inputs_and_add_conversation_history(disease_config_inputs)
             disease_config_result = self.disease_config_agent().execute_task(self.get_disease_config_task())
@@ -657,15 +673,19 @@ class PatientDataCrew():
             # 发送进度更新
             yield {"type": "progress", "stage": "timeline_generation", "message": "正在生成患者时间轴", "progress": 50}
 
-            # 🆕 压缩现有时间轴数据
-            compressed_timeline = existing_timeline
-            if existing_timeline and len(existing_timeline) > 0:
-                compressed_timeline = data_compressor.compress_timeline(
-                    existing_timeline,
-                    max_tokens=30000,
-                    model_name='deepseek-chat'
-                )
-                logger.info(f"✅ 时间轴压缩完成: {len(existing_timeline)} → {len(compressed_timeline)} 条记录")
+            # 🆕 压缩现有时间轴数据（可选功能）
+            compressed_timeline = existing_timeline  # 默认使用原始数据
+            if enable_compression and data_compressor and existing_timeline and len(existing_timeline) > 0:
+                try:
+                    compressed_timeline = data_compressor.compress_timeline(
+                        existing_timeline,
+                        max_tokens=30000,
+                        model_name='deepseek-chat'
+                    )
+                    logger.info(f"✅ 时间轴压缩完成: {len(existing_timeline)} → {len(compressed_timeline)} 条记录")
+                except Exception as e:
+                    logger.warning(f"⚠️ 时间轴压缩失败，使用原始数据: {e}")
+                    compressed_timeline = existing_timeline
 
             # 步骤2: 执行患者数据处理任务，将疾病配置作为上下文传递
             inputs = {
@@ -705,15 +725,19 @@ class PatientDataCrew():
             # 发送进度更新
             yield {"type": "progress", "stage": "patient_journey", "message": "正在提取患者旅程数据", "progress": 70}
 
-            # 🆕 压缩现有患者旅程数据
-            compressed_journey = existing_patient_journey
-            if existing_patient_journey and len(existing_patient_journey) > 0:
-                compressed_journey = data_compressor.compress_data(
-                    existing_patient_journey,
-                    max_tokens=20000,
-                    model_name='deepseek-chat'
-                )
-                logger.info(f"✅ 患者旅程压缩完成")
+            # 🆕 压缩现有患者旅程数据（可选功能）
+            compressed_journey = existing_patient_journey  # 默认使用原始数据
+            if enable_compression and data_compressor and existing_patient_journey and len(existing_patient_journey) > 0:
+                try:
+                    compressed_journey = data_compressor.compress_data(
+                        existing_patient_journey,
+                        max_tokens=20000,
+                        model_name='deepseek-chat'
+                    )
+                    logger.info(f"✅ 患者旅程压缩完成")
+                except Exception as e:
+                    logger.warning(f"⚠️ 患者旅程压缩失败，使用原始数据: {e}")
+                    compressed_journey = existing_patient_journey
 
             # 执行"患者时间旅程"任务
             special_parsed_result = None
@@ -773,15 +797,19 @@ class PatientDataCrew():
             # 发送进度更新
             yield {"type": "progress", "stage": "mdt_report", "message": "正在生成MDT报告", "progress": 85}
 
-            # 🆕 压缩现有MDT报告数据
-            compressed_mdt_report = existing_mdt_report
-            if existing_mdt_report and len(existing_mdt_report) > 0:
-                compressed_mdt_report = data_compressor.compress_data(
-                    existing_mdt_report,
-                    max_tokens=20000,
-                    model_name='deepseek-chat'
-                )
-                logger.info(f"✅ MDT报告压缩完成")
+            # 🆕 压缩现有MDT报告数据（可选功能）
+            compressed_mdt_report = existing_mdt_report  # 默认使用原始数据
+            if enable_compression and data_compressor and existing_mdt_report and len(existing_mdt_report) > 0:
+                try:
+                    compressed_mdt_report = data_compressor.compress_data(
+                        existing_mdt_report,
+                        max_tokens=20000,
+                        model_name='deepseek-chat'
+                    )
+                    logger.info(f"✅ MDT报告压缩完成")
+                except Exception as e:
+                    logger.warning(f"⚠️ MDT报告压缩失败，使用原始数据: {e}")
+                    compressed_mdt_report = existing_mdt_report
 
             # 执行MDT报告生成任务
             mdt_report_result = None
