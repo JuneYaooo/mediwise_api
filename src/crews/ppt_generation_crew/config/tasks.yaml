@@ -45,8 +45,7 @@ generate_ppt_slides_task:
     [患者时间旅程图片URL]: {patient_journey_image_url}
     [患者时间旅程图片路径]: {patient_journey_image_path}
     [核心指标趋势图片]: {indicator_chart_images}
-    [治疗甘特图URL]: {treatment_gantt_chart_url}
-    [治疗甘特图路径]: {treatment_gantt_chart_path}
+    [治疗甘特图数据]: {treatment_gantt_data}
 
 
   expected_output: >
@@ -86,8 +85,8 @@ transform_and_generate_ppt_task:
     **注意事项:**
     - 只使用患者数据中真实存在的信息，不要编造数据
     - 对于医学原始文件的图像，除非模板里有特殊要求，否则不要用[患者时间轴数据]里的图，而是从[原始文件数据]中选择，注意只选择图片格式的，pdf格式的不选取，优先选取'has_medical_image'为True有医学影像的图。
-    - 患者时间旅程图片、核心指标趋势图片和治疗甘特图已经预先生成好，请直接使用提供的URL
-    - [治疗甘特图数据]包含了每条治疗记录的详细信息（治疗名称、开始/结束日期、类别、来源文件名、详情），可以直接用于PPT模板中需要展示治疗详情的地方
+    - 患者时间旅程图片和核心指标趋势图片已经预先生成好，请直接使用提供的URL
+    - [治疗甘特图数据]包含了每条治疗记录的详细信息（治疗名称、开始/结束日期、类别、来源文件名、详情），可以直接用于PPT模板中需要展示治疗详情的地方，PPT模板会根据此数据自行生成甘特图
 
     输入:
     [系统日期]: {current_date}
@@ -97,7 +96,6 @@ transform_and_generate_ppt_task:
     [会话ID]: {session_id}
     [患者时间旅程图片URL]: {patient_journey_image_url}
     [核心指标趋势图片]: {indicator_chart_images}
-    [治疗甘特图URL]: {treatment_gantt_chart_url}
     [治疗甘特图数据]: {treatment_gantt_data}
 
 

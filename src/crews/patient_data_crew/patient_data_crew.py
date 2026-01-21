@@ -20,6 +20,9 @@ from src.custom_tools.patient_journey_image_generator import generate_patient_jo
 from src.custom_tools.indicator_chart_image_generator import generate_indicator_chart_image_sync
 from app.utils.qiniu_upload_service import QiniuUploadService
 from app.utils.file_metadata_builder import FileMetadataBuilder  # 新增导入
+from src.utils.data_compressor import PatientDataCompressor  # 数据压缩
+from src.utils.token_manager import TokenManager  # Token管理
+from src.utils.universal_chunked_generator import UniversalChunkedGenerator  # 分块生成
 
 # 初始化 logger
 logger = BeijingLogger().get_logger()
@@ -299,7 +302,13 @@ class PatientDataCrew():
             
             # 设置当前日期
             current_date = datetime.now().strftime("%Y-%m-%d")
-            
+
+            # 🆕 初始化数据压缩和分块生成工具
+            token_manager = TokenManager(logger=logger)
+            data_compressor = PatientDataCompressor(logger=logger, token_manager=token_manager)
+            chunked_generator = UniversalChunkedGenerator(logger=logger, token_manager=token_manager)
+            logger.info("✅ 已初始化数据压缩和分块生成工具")
+
             # 🚨 修改：使用传入的existing_patient_data参数而不是从本地文件加载
             existing_timeline = None
             existing_patient_journey = None
@@ -606,8 +615,16 @@ class PatientDataCrew():
             # 发送进度更新
             yield {"type": "progress", "stage": "disease_config", "message": "正在识别疾病配置", "progress": 35}
 
+            # 🆕 压缩患者信息数据
+            compressed_patient_info = data_compressor.compress_data(
+                preprocessed_info,
+                max_tokens=50000,
+                model_name='deepseek-chat'
+            )
+            logger.info(f"✅ 患者信息压缩完成: {len(preprocessed_info)} → {len(compressed_patient_info)} 字符")
+
             disease_config_inputs = {
-                "patient_info": preprocessed_info
+                "patient_info": compressed_patient_info  # 🆕 使用压缩后的数据
             }
             self.get_disease_config_task().interpolate_inputs_and_add_conversation_history(disease_config_inputs)
             disease_config_result = self.disease_config_agent().execute_task(self.get_disease_config_task())
@@ -640,12 +657,22 @@ class PatientDataCrew():
             # 发送进度更新
             yield {"type": "progress", "stage": "timeline_generation", "message": "正在生成患者时间轴", "progress": 50}
 
+            # 🆕 压缩现有时间轴数据
+            compressed_timeline = existing_timeline
+            if existing_timeline and len(existing_timeline) > 0:
+                compressed_timeline = data_compressor.compress_timeline(
+                    existing_timeline,
+                    max_tokens=30000,
+                    model_name='deepseek-chat'
+                )
+                logger.info(f"✅ 时间轴压缩完成: {len(existing_timeline)} → {len(compressed_timeline)} 条记录")
+
             # 步骤2: 执行患者数据处理任务，将疾病配置作为上下文传递
             inputs = {
-                "patient_info": preprocessed_info,
+                "patient_info": compressed_patient_info,  # 🆕 使用压缩后的数据
                 "patient_timeline": patient_timeline,
                 "current_date": current_date,
-                "existing_timeline": existing_timeline if existing_timeline else [],
+                "existing_timeline": compressed_timeline,  # 🆕 使用压缩后的时间轴
                 "disease_config": disease_config_data  # 传递疾病配置
             }
             self.process_patient_data_task().interpolate_inputs_and_add_conversation_history(inputs)
@@ -678,14 +705,24 @@ class PatientDataCrew():
             # 发送进度更新
             yield {"type": "progress", "stage": "patient_journey", "message": "正在提取患者旅程数据", "progress": 70}
 
+            # 🆕 压缩现有患者旅程数据
+            compressed_journey = existing_patient_journey
+            if existing_patient_journey and len(existing_patient_journey) > 0:
+                compressed_journey = data_compressor.compress_data(
+                    existing_patient_journey,
+                    max_tokens=20000,
+                    model_name='deepseek-chat'
+                )
+                logger.info(f"✅ 患者旅程压缩完成")
+
             # 执行"患者时间旅程"任务
             special_parsed_result = None
             try:
                 core_inputs = {
                     "current_date": current_date,
-                    "patient_content": preprocessed_info,
+                    "patient_content": compressed_patient_info,  # 🆕 使用压缩后的数据
                     "full_structure_data": parsed_result if parsed_result else {},
-                    "existing_patient_journey": existing_patient_journey if existing_patient_journey else {},
+                    "existing_patient_journey": compressed_journey,  # 🆕 使用压缩后的旅程
                     "disease_config": disease_config_data  # 传递疾病配置
                 }
                 self.extract_core_points_task().interpolate_inputs_and_add_conversation_history(core_inputs)
@@ -736,14 +773,24 @@ class PatientDataCrew():
             # 发送进度更新
             yield {"type": "progress", "stage": "mdt_report", "message": "正在生成MDT报告", "progress": 85}
 
+            # 🆕 压缩现有MDT报告数据
+            compressed_mdt_report = existing_mdt_report
+            if existing_mdt_report and len(existing_mdt_report) > 0:
+                compressed_mdt_report = data_compressor.compress_data(
+                    existing_mdt_report,
+                    max_tokens=20000,
+                    model_name='deepseek-chat'
+                )
+                logger.info(f"✅ MDT报告压缩完成")
+
             # 执行MDT报告生成任务
             mdt_report_result = None
             try:
                 mdt_inputs = {
                     "current_date": current_date,
-                    "patient_content": preprocessed_info,
+                    "patient_content": compressed_patient_info,  # 🆕 使用压缩后的数据
                     "patient_structured_data": parsed_result if parsed_result else {},
-                    "existing_mdt_report": existing_mdt_report if existing_mdt_report else {},
+                    "existing_mdt_report": compressed_mdt_report,  # 🆕 使用压缩后的报告
                     "disease_config": disease_config_data  # 传递疾病配置
                 }
                 self.generate_mdt_report_task().interpolate_inputs_and_add_conversation_history(mdt_inputs)

@@ -16,8 +16,16 @@ from src.custom_tools.medical_ppt_template import get_template_by_id, list_avail
 from src.custom_tools.patient_journey_image_generator import generate_patient_journey_image_sync
 from src.custom_tools.indicator_chart_image_generator import generate_indicator_chart_images_multiple_sync
 from src.custom_tools.treatment_data_processor import TreatmentDataProcessor
-from src.custom_tools.treatment_gantt_chart_generator import generate_treatment_gantt_chart_sync
+# from src.custom_tools.treatment_gantt_chart_generator import generate_treatment_gantt_chart_sync  # 不再需要：PPT模板会自己生成甘特图
 from app.utils.qiniu_upload_service import QiniuUploadService
+
+# Token管理和数据压缩模块
+from src.utils.token_manager import TokenManager
+from src.utils.data_compressor import PatientDataCompressor
+from src.utils.chunked_processor import ChunkedPPTProcessor
+from src.utils.llm_retry_handler import LLMRetryHandler, TokenLimitError
+from src.utils.output_completeness_guard import OutputCompletenessGuard
+from src.utils.output_chunked_generator import OutputChunkedGenerator
 
 # 初始化 logger
 logger = BeijingLogger().get_logger()
@@ -176,7 +184,8 @@ class PPTGenerationCrew():
 
     def _generate_ppt_data_with_llm(self, patient_timeline, raw_files_data, patient_name,
                                      patient_journey_image_url, indicator_chart_images,
-                                     treatment_gantt_chart_url, treatment_gantt_data=None, template_type=2):
+                                     treatment_gantt_chart_url, treatment_gantt_data=None, template_type=2,
+                                     use_chunked_output=False):
         """
         使用LLM直接生成PPT数据（不使用Agent流程）
 
@@ -189,12 +198,15 @@ class PPTGenerationCrew():
             treatment_gantt_chart_url: 治疗甘特图URL
             treatment_gantt_data: 治疗甘特图数据列表（source_file 已替换为文件名）
             template_type: 模板类型（默认2）
+            use_chunked_output: 是否使用分块输出（默认False）
 
         Returns:
             dict: 格式化的PPT数据，可直接传给SuvalueGeneratePPTTool
         """
         try:
-            logger.info("使用LLM直接生成PPT数据（绕过Agent流程）")
+            logger.info("=" * 100)
+            logger.info("🤖 使用LLM直接生成PPT数据（绕过Agent流程）")
+            logger.info("=" * 100)
 
             # 1. 获取模板信息
             template_tool = SuvaluePPTTemplateTool()
@@ -202,12 +214,45 @@ class PPTGenerationCrew():
 
             if not template_info or not template_info.get("success"):
                 error_msg = template_info.get("error", "获取模板信息失败") if template_info else "获取模板信息失败"
-                logger.error(f"获取Suvalue模板信息失败: {error_msg}")
+                logger.error(f"❌ 获取Suvalue模板信息失败: {error_msg}")
                 return None
 
             # 模板JSON在 template_json 字段中（包含注释的原始模板）
             template_json_str = template_info.get("template_json", "{}")
-            logger.info(f"成功获取模板JSON字符串，长度: {len(template_json_str)}")
+            logger.info(f"✅ 成功获取模板JSON，长度: {len(template_json_str)} 字符")
+
+            # ========== 检查是否需要分块输出 ==========
+            if use_chunked_output:
+                logger.info("=" * 100)
+                logger.info("🔀 使用分块输出模式")
+                logger.info("=" * 100)
+
+                # 准备患者数据
+                patient_data = {
+                    'patient_name': patient_name,
+                    'patient_timeline': patient_timeline,
+                    'raw_files_data': raw_files_data,
+                    'treatment_gantt_data': treatment_gantt_data,
+                    'patient_journey_image_url': patient_journey_image_url,
+                    'indicator_chart_images': indicator_chart_images,
+                    'treatment_gantt_chart_url': treatment_gantt_chart_url
+                }
+
+                # 使用分块生成器
+                from src.utils.output_chunked_generator import OutputChunkedGenerator
+                from src.utils.token_manager import TokenManager
+
+                token_manager = TokenManager(logger=logger)
+                chunked_generator = OutputChunkedGenerator(logger=logger, token_manager=token_manager)
+
+                ppt_data = chunked_generator.generate_ppt_in_chunks(
+                    llm=document_generation_llm,
+                    patient_data=patient_data,
+                    template_info=template_info,
+                    model_name='gemini-3-flash-preview'
+                )
+
+                return ppt_data
 
             # 不需要解析JSON，直接将原始模板（包含注释）传给LLM
             # LLM能理解JSON中的注释说明
@@ -249,55 +294,73 @@ class PPTGenerationCrew():
 请输出符合模板要求的JSON数据:"""
 
             # 3. 调用LLM
-            logger.info("调用LLM生成PPT数据...")
+            logger.info("📤 准备调用LLM生成PPT数据...")
+            logger.info(f"  ├─ 患者姓名: {patient_name}")
+            logger.info(f"  ├─ 时间轴记录数: {len(patient_timeline) if isinstance(patient_timeline, list) else 'N/A'}")
+            logger.info(f"  ├─ 原始文件数: {len(raw_files_data) if isinstance(raw_files_data, list) else 'N/A'}")
+            logger.info(f"  ├─ 治疗甘特图数据: {len(treatment_gantt_data) if treatment_gantt_data else 0} 条")
+            logger.info(f"  └─ 预生成图表: 时间旅程图={'有' if patient_journey_image_url else '无'}, "
+                       f"指标趋势图={len(indicator_chart_images) if indicator_chart_images else 0}个")
+
             try:
                 # CrewAI LLM 对象直接调用
                 response = document_generation_llm.call(prompt)
                 response_text = str(response)
+                logger.info(f"✅ LLM调用成功，响应长度: {len(response_text)} 字符")
             except AttributeError:
                 # 如果是 LangChain LLM，使用 invoke
                 try:
                     response = document_generation_llm.invoke(prompt)
                     response_text = response.content if hasattr(response, 'content') else str(response)
+                    logger.info(f"✅ LLM调用成功，响应长度: {len(response_text)} 字符")
                 except Exception as e:
-                    logger.error(f"LLM调用失败: {e}")
+                    logger.error(f"❌ LLM调用失败: {e}")
                     return None
 
             # 4. 提取JSON
-            logger.info(f"LLM响应长度: {len(response_text)}")
-            logger.info(f"LLM响应前500字符: {response_text[:500]}")
+            logger.info("🔍 开始解析LLM响应...")
+            logger.info(f"  └─ 响应前500字符: {response_text[:500]}")
 
             # 使用JsonUtils提取JSON
             ppt_data = JsonUtils.safe_parse_json(response_text, debug_prefix="LLM生成PPT数据")
 
             if not ppt_data:
-                logger.error("无法从LLM响应中提取有效JSON")
+                logger.error("❌ 无法从LLM响应中提取有效JSON")
+                logger.error(f"  └─ 响应内容: {response_text[:1000]}")
                 return None
+
+            logger.info("✅ JSON解析成功")
 
             # 检查LLM返回的结构，提取实际的PPT数据
             # LLM可能返回包装结构：{"success": true, "template_json": "..."}
             # 或者直接返回PPT数据：{"pptTemplate2Vm": {...}}
+            logger.info("🔍 检查PPT数据结构...")
             if "template_json" in ppt_data:
                 # 如果有template_json字段，需要再解析一次
-                logger.info("检测到template_json字段，进行二次解析...")
+                logger.info("  ├─ 检测到template_json字段，进行二次解析...")
                 template_json_str = ppt_data.get("template_json", "{}")
                 ppt_data = JsonUtils.safe_parse_json(template_json_str, debug_prefix="二次解析PPT数据")
                 if not ppt_data:
-                    logger.error("二次解析失败")
+                    logger.error("  └─ ❌ 二次解析失败")
                     return None
+                logger.info("  └─ ✅ 二次解析成功")
 
             # 验证是否包含pptTemplate2Vm字段
             if "pptTemplate2Vm" not in ppt_data:
-                logger.error(f"PPT数据缺少pptTemplate2Vm字段，当前顶层字段: {list(ppt_data.keys())}")
+                logger.warning(f"  ⚠️ PPT数据缺少pptTemplate2Vm字段，当前顶层字段: {list(ppt_data.keys())}")
                 # 如果顶层就是pptTemplate2Vm的内容，包装一下
                 if any(key in ppt_data for key in ["title", "patient", "diag"]):
-                    logger.info("检测到顶层包含PPT字段，自动包装为pptTemplate2Vm结构")
+                    logger.info("  ├─ 检测到顶层包含PPT字段，自动包装为pptTemplate2Vm结构")
                     ppt_data = {"pptTemplate2Vm": ppt_data}
+                    logger.info("  └─ ✅ 自动包装成功")
                 else:
+                    logger.error("  └─ ❌ 无法识别PPT数据结构")
                     return None
 
+            logger.info("=" * 100)
             logger.info(f"✅ 成功生成PPT数据结构")
             logger.info(f"📦 pptTemplate2Vm 包含字段: {list(ppt_data.get('pptTemplate2Vm', {}).keys())[:10]}")
+            logger.info("=" * 100)
             return ppt_data
 
         except Exception as e:
@@ -339,11 +402,17 @@ class PPTGenerationCrew():
     def generate_ppt(self, patient_timeline, patient_journey, raw_files_data, agent_session_id,
                      auth_token=None, template_id="medical", filter_no_cropped_image=True):
         """
-        Generate PPT from patient data
+        Generate PPT from patient data (增强版 - 支持自动压缩和分块处理)
 
         根据初始化时的 use_suvalue_api 参数选择生成方式：
         - True: 使用Suvalue API生成（需要auth_token）
         - False: 使用本地python-pptx生成（需要template_id）
+
+        新增功能：
+        - 自动检测token超限
+        - 智能数据压缩
+        - 分块处理超大数据集
+        - 输出完整性保护
 
         Args:
             patient_timeline (dict or list): Patient timeline data for PPT content generation
@@ -360,6 +429,12 @@ class PPTGenerationCrew():
                 - 本地模式: {"success": bool, "local_path": str, "file_uuid": str, "qiniu_url": str}
         """
         try:
+            # ========== 初始化Token管理和数据压缩模块 ==========
+            token_manager = TokenManager(logger=logger)
+            data_compressor = PatientDataCompressor(logger=logger, token_manager=token_manager)
+            chunked_processor = ChunkedPPTProcessor(logger=logger, token_manager=token_manager)
+            output_guard = OutputCompletenessGuard(logger=logger)
+            output_chunked_generator = OutputChunkedGenerator(logger=logger, token_manager=token_manager)
             if self._use_suvalue_api:
                 logger.info("Starting Suvalue PPT generation task (API mode)")
             else:
@@ -369,6 +444,131 @@ class PPTGenerationCrew():
             # 处理 raw_files_data，只保留需要的字段
             processed_raw_files_data = process_raw_files_data(raw_files_data, filter_no_cropped_image=filter_no_cropped_image)
             logger.info(f"处理了 {len(processed_raw_files_data)} 个文件的元数据（仅保留PPT所需字段）")
+
+            # ========== Token检查和数据压缩 ==========
+            model_name = 'gemini-3-flash-preview'  # 从llms.py获取
+            enable_auto_compression = os.getenv('ENABLE_AUTO_COMPRESSION', 'true').lower() in ('true', '1', 'yes')
+
+            # 构建输入数据用于token检查
+            input_data_for_check = {
+                'patient_timeline': patient_timeline,
+                'raw_files_data': processed_raw_files_data,
+                'patient_journey': patient_journey
+            }
+
+            logger.info("=" * 100)
+            logger.info("🔍 开始Token检查和数据压缩流程")
+            logger.info("=" * 100)
+
+            # 检查输入token限制
+            check_result = token_manager.check_input_limit(input_data_for_check, model_name)
+
+            logger.info(f"📊 输入数据统计:")
+            logger.info(f"  ├─ 患者时间轴记录数: {len(patient_timeline) if isinstance(patient_timeline, list) else 'N/A'}")
+            logger.info(f"  ├─ 原始文件数: {len(processed_raw_files_data)}")
+            logger.info(f"  ├─ 估算总tokens: {check_result['total_tokens']}")
+            logger.info(f"  ├─ 模型限制: {check_result['limit']} tokens")
+            logger.info(f"  ├─ 安全限制: {check_result['safe_limit']} tokens")
+            logger.info(f"  ├─ 使用率: {check_result['usage_ratio']:.1%}")
+            logger.info(f"  └─ 需要压缩: {'是 ⚠️' if check_result['compression_needed'] else '否 ✅'}")
+
+            # 如果需要压缩且启用了自动压缩
+            if check_result['compression_needed'] and enable_auto_compression:
+                logger.warning("=" * 100)
+                logger.warning(f"⚠️ 输入数据超过安全限制，启动自动压缩流程")
+                logger.warning(f"⚠️ 当前: {check_result['total_tokens']} tokens > 安全限制: {check_result['safe_limit']} tokens")
+                logger.warning("=" * 100)
+
+                # 计算目标token数
+                target_tokens = check_result['safe_limit']
+
+                # 记录压缩前的数据量
+                original_timeline_count = len(patient_timeline) if isinstance(patient_timeline, list) else 0
+                original_files_count = len(processed_raw_files_data)
+
+                # 分别压缩不同的数据
+                # 1. 压缩时间轴数据（分配50%的目标token）
+                if patient_timeline:
+                    logger.info(f"📦 开始压缩时间轴数据 (目标: {int(target_tokens * 0.5)} tokens)...")
+                    patient_timeline = data_compressor.compress_timeline(
+                        patient_timeline,
+                        target_tokens=int(target_tokens * 0.5)
+                    )
+                    compressed_timeline_count = len(patient_timeline) if isinstance(patient_timeline, list) else 0
+                    logger.info(f"  ✅ 时间轴压缩完成: {original_timeline_count} 条 → {compressed_timeline_count} 条 "
+                              f"(保留率: {compressed_timeline_count/original_timeline_count:.1%})")
+
+                # 2. 压缩原始文件数据（分配30%的目标token）
+                if processed_raw_files_data:
+                    logger.info(f"📦 开始压缩原始文件数据 (目标: {int(target_tokens * 0.3)} tokens)...")
+                    # 统计医学影像文件数
+                    original_medical_count = sum(1 for f in processed_raw_files_data if f.get('has_medical_image', False))
+
+                    processed_raw_files_data = data_compressor.compress_raw_files(
+                        processed_raw_files_data,
+                        target_tokens=int(target_tokens * 0.3)
+                    )
+
+                    compressed_files_count = len(processed_raw_files_data)
+                    compressed_medical_count = sum(1 for f in processed_raw_files_data if f.get('has_medical_image', False))
+
+                    logger.info(f"  ✅ 文件压缩完成: {original_files_count} 个 → {compressed_files_count} 个 "
+                              f"(保留率: {compressed_files_count/original_files_count:.1%})")
+                    logger.info(f"  ✅ 医学影像: {original_medical_count} 个 → {compressed_medical_count} 个 "
+                              f"(保留率: {compressed_medical_count/original_medical_count:.1%})" if original_medical_count > 0 else "  ℹ️ 无医学影像文件")
+
+                # 3. 压缩patient_journey数据（分配20%的目标token）
+                if patient_journey and isinstance(patient_journey, dict):
+                    logger.info(f"📦 开始压缩patient_journey数据 (目标: {int(target_tokens * 0.2)} tokens)...")
+                    patient_journey = data_compressor.compress_data(
+                        patient_journey,
+                        target_tokens=int(target_tokens * 0.2)
+                    )
+                    logger.info(f"  ✅ patient_journey压缩完成")
+
+                # 重新检查压缩后的token数
+                compressed_data = {
+                    'patient_timeline': patient_timeline,
+                    'raw_files_data': processed_raw_files_data,
+                    'patient_journey': patient_journey
+                }
+                compressed_check = token_manager.check_input_limit(compressed_data, model_name)
+
+                logger.info("=" * 100)
+                logger.info(f"✅ 数据压缩完成！")
+                logger.info(f"📊 压缩效果:")
+                logger.info(f"  ├─ 原始tokens: {check_result['total_tokens']}")
+                logger.info(f"  ├─ 压缩后tokens: {compressed_check['total_tokens']}")
+                logger.info(f"  ├─ 压缩比例: {compressed_check['total_tokens']/check_result['total_tokens']:.1%}")
+                logger.info(f"  ├─ 新使用率: {compressed_check['usage_ratio']:.1%}")
+                logger.info(f"  └─ 在限制内: {'是 ✅' if compressed_check['within_limit'] else '否 ❌'}")
+                logger.info("=" * 100)
+
+                # 如果压缩后仍超限，检查是否需要分块处理
+                if not compressed_check['within_limit']:
+                    logger.error("=" * 100)
+                    logger.error(f"❌ 数据压缩后仍超过模型限制")
+                    logger.error(f"❌ 当前: {compressed_check['total_tokens']} tokens > 限制: {compressed_check['limit']} tokens")
+                    logger.error(f"❌ 建议: 1) 减少数据量  2) 使用更激进的压缩策略  3) 启用分块处理")
+                    logger.error("=" * 100)
+                    # 这里可以选择：1) 使用分块处理  2) 返回错误
+                    # 暂时返回错误，让用户知道数据量过大
+                    return {
+                        "success": False,
+                        "error": f"患者数据量过大，即使压缩后仍超过模型限制 ({compressed_check['total_tokens']} > {compressed_check['limit']} tokens)。"
+                                f"建议减少数据量或联系技术支持。"
+                    }
+            elif not enable_auto_compression and check_result['compression_needed']:
+                logger.warning("=" * 100)
+                logger.warning(f"⚠️ 输入数据超过安全限制，但自动压缩已禁用")
+                logger.warning(f"⚠️ 当前: {check_result['total_tokens']} tokens > 安全限制: {check_result['safe_limit']} tokens")
+                logger.warning(f"⚠️ 建议: 启用 ENABLE_AUTO_COMPRESSION=true")
+                logger.warning("=" * 100)
+            else:
+                logger.info("=" * 100)
+                logger.info(f"✅ 数据量在安全范围内，无需压缩")
+                logger.info("=" * 100)
+
 
             # 获取患者姓名
             patient_name = '患者'
@@ -524,14 +724,13 @@ class PPTGenerationCrew():
                     import traceback
                     logger.error(traceback.format_exc())
 
-            # ========== 处理治疗甘特图数据并生成图片上传到七牛云 ==========
+            # ========== 处理治疗甘特图数据（仅数据处理，不生成图片）==========
             #
             # 治疗甘特图数据处理流程：
             # 1. 从 patient_timeline 或 patient_journey 中提取治疗数据
             # 2. 使用 TreatmentDataProcessor 处理数据，生成甘特图所需格式 (gantt_data)
             # 3. 构建 file_uuid -> filename 映射，将 gantt_data 中的 source_file (UUID) 替换为文件名
-            # 4. 调用 generate_treatment_gantt_chart_sync 生成甘特图图片 (使用 ECharts 本地渲染)
-            # 5. 上传图片到七牛云，获取 treatment_gantt_chart_url
+            # 4. 将 gantt_data 传递给 PPT 模板（PPT 模板会自己生成甘特图）
             #
             # gantt_data 数据结构示例（处理后的原始数据，可直接传给PPT模板）：
             # [
@@ -552,7 +751,7 @@ class PPTGenerationCrew():
 
             if patient_timeline or patient_journey:
                 try:
-                    logger.info("开始处理患者治疗数据并生成甘特图...")
+                    logger.info("开始处理患者治疗数据（仅提取数据，不生成图片）...")
 
                     # 初始化治疗数据处理器
                     treatment_processor = TreatmentDataProcessor()
@@ -574,7 +773,7 @@ class PPTGenerationCrew():
                     gantt_data = treatment_processor.process_patient_treatments(source_data)
 
                     if gantt_data and len(gantt_data) > 0:
-                        logger.info(f"成功提取 {len(gantt_data)} 条治疗记录，开始生成甘特图...")
+                        logger.info(f"成功提取 {len(gantt_data)} 条治疗记录")
                         logger.info(f"甘特图数据: {gantt_data}")
 
                         # 构建 source_file (file_uuid) -> filename 的映射
@@ -596,51 +795,53 @@ class PPTGenerationCrew():
                                 treatment["source_file"] = ""
 
                         logger.info("已将治疗记录的 source_file 从 UUID 替换为文件名")
+                        logger.info("治疗甘特图数据处理完成，将传递给 PPT 模板自行生成图表")
 
-                        # 生成图片文件名和路径
-                        gantt_uuid = str(uuid_lib.uuid4())
-                        output_dir = Path("output/files_extract") / agent_session_id / "ppt_images"
-                        output_dir.mkdir(parents=True, exist_ok=True)
-
-                        gantt_filename = f"treatment_gantt_{gantt_uuid}.png"
-                        gantt_path = output_dir / gantt_filename
-
-                        # 生成甘特图图片（使用ECharts - 本地渲染，无需联网）
-                        success = generate_treatment_gantt_chart_sync(
-                            gantt_data=gantt_data,
-                            output_path=str(gantt_path),
-                            patient_name=patient_name,
-                            use_google_charts=False  # 使用ECharts，每条治疗记录独立显示
-                        )
-
-                        if success and gantt_path.exists():
-                            treatment_gantt_chart_path = str(gantt_path)
-                            logger.info(f"治疗甘特图生成成功: {treatment_gantt_chart_path}")
-
-                            # 上传到七牛云
-                            try:
-                                qiniu_service = QiniuUploadService()
-                                qiniu_key = f"treatment_gantt_ppt/{gantt_uuid}.png"
-
-                                upload_success, cloud_url, error = qiniu_service.upload_file(
-                                    str(gantt_path),
-                                    qiniu_key
-                                )
-
-                                if upload_success:
-                                    treatment_gantt_chart_url = cloud_url
-                                    logger.info(f"治疗甘特图已上传到七牛云: {cloud_url}")
-                                else:
-                                    logger.error(f"上传治疗甘特图到七牛云失败: {error}")
-                            except Exception as upload_error:
-                                logger.error(f"上传治疗甘特图到七牛云时出错: {upload_error}")
-                        else:
-                            logger.warning("治疗甘特图生成失败")
+                        # ========== 以下代码已注释：不再生成甘特图图片，PPT模板会自己生成 ==========
+                        # # 生成图片文件名和路径
+                        # gantt_uuid = str(uuid_lib.uuid4())
+                        # output_dir = Path("output/files_extract") / agent_session_id / "ppt_images"
+                        # output_dir.mkdir(parents=True, exist_ok=True)
+                        #
+                        # gantt_filename = f"treatment_gantt_{gantt_uuid}.png"
+                        # gantt_path = output_dir / gantt_filename
+                        #
+                        # # 生成甘特图图片（使用ECharts - 本地渲染，无需联网）
+                        # success = generate_treatment_gantt_chart_sync(
+                        #     gantt_data=gantt_data,
+                        #     output_path=str(gantt_path),
+                        #     patient_name=patient_name,
+                        #     use_google_charts=False  # 使用ECharts，每条治疗记录独立显示
+                        # )
+                        #
+                        # if success and gantt_path.exists():
+                        #     treatment_gantt_chart_path = str(gantt_path)
+                        #     logger.info(f"治疗甘特图生成成功: {treatment_gantt_chart_path}")
+                        #
+                        #     # 上传到七牛云
+                        #     try:
+                        #         qiniu_service = QiniuUploadService()
+                        #         qiniu_key = f"treatment_gantt_ppt/{gantt_uuid}.png"
+                        #
+                        #         upload_success, cloud_url, error = qiniu_service.upload_file(
+                        #             str(gantt_path),
+                        #             qiniu_key
+                        #         )
+                        #
+                        #         if upload_success:
+                        #             treatment_gantt_chart_url = cloud_url
+                        #             logger.info(f"治疗甘特图已上传到七牛云: {cloud_url}")
+                        #         else:
+                        #             logger.error(f"上传治疗甘特图到七牛云失败: {error}")
+                        #     except Exception as upload_error:
+                        #         logger.error(f"上传治疗甘特图到七牛云时出错: {upload_error}")
+                        # else:
+                        #     logger.warning("治疗甘特图生成失败")
                     else:
-                        logger.info("未提取到治疗数据，跳过甘特图生成")
+                        logger.info("未提取到治疗数据，跳过甘特图处理")
 
                 except Exception as e:
-                    logger.error(f"生成或上传治疗甘特图时出错: {e}")
+                    logger.error(f"处理治疗甘特图数据时出错: {e}")
                     import traceback
                     logger.error(traceback.format_exc())
 
@@ -669,8 +870,8 @@ class PPTGenerationCrew():
                     "session_id": agent_session_id,
                     "patient_journey_image_url": patient_journey_image_url or "",
                     "indicator_chart_images": json.dumps(indicator_chart_images, ensure_ascii=False),
-                    "treatment_gantt_chart_url": treatment_gantt_chart_url or "",
-                    "treatment_gantt_data": treatment_gantt_data_json  # 新增：治疗甘特图数据（source_file 已替换为文件名）
+                    # "treatment_gantt_chart_url": treatment_gantt_chart_url or "",  # 已移除：不再生成甘特图图片
+                    "treatment_gantt_data": treatment_gantt_data_json  # 治疗甘特图数据（source_file 已替换为文件名），PPT模板会用此数据自行生成甘特图
                 }
             else:
                 # 本地模式
@@ -700,9 +901,9 @@ class PPTGenerationCrew():
                     "patient_journey_image_url": patient_journey_image_url or "",
                     "patient_journey_image_path": patient_journey_image_path,
                     "indicator_chart_images": json.dumps(indicator_chart_images, ensure_ascii=False),
-                    "treatment_gantt_chart_url": treatment_gantt_chart_url or "",
-                    "treatment_gantt_chart_path": treatment_gantt_chart_path,
-                    "treatment_gantt_data": treatment_gantt_data_json  # 新增：治疗甘特图数据（source_file 已替换为文件名）
+                    # "treatment_gantt_chart_url": treatment_gantt_chart_url or "",  # 已移除：不再生成甘特图图片
+                    # "treatment_gantt_chart_path": treatment_gantt_chart_path,  # 已移除：不再生成甘特图图片
+                    "treatment_gantt_data": treatment_gantt_data_json  # 治疗甘特图数据（source_file 已替换为文件名），PPT模板会用此数据自行生成甘特图
                 }
 
             # 根据模式选择执行不同的任务
@@ -716,6 +917,26 @@ class PPTGenerationCrew():
                 logger.info("使用直接LLM调用流程生成PPT（绕过Agent）")
                 logger.info("=" * 80)
 
+                # ========== 检查是否需要分块输出 ==========
+                model_name = 'gemini-3-flash-preview'
+
+                # 估算输出大小
+                estimated_output_size = output_chunked_generator.estimate_output_size({
+                    'patient_timeline': patient_timeline,
+                    'raw_files_data': processed_raw_files_data
+                })
+
+                # 检查是否需要分块输出
+                use_chunked_output = output_chunked_generator.should_use_chunked_output(
+                    model_name=model_name,
+                    expected_output_size=estimated_output_size
+                )
+
+                if use_chunked_output:
+                    logger.warning("=" * 100)
+                    logger.warning(f"⚠️ 预期输出较大 ({estimated_output_size} tokens)，启用分块输出模式")
+                    logger.warning("=" * 100)
+
                 # 1. 使用LLM生成PPT数据
                 ppt_data = self._generate_ppt_data_with_llm(
                     patient_timeline=patient_timeline,
@@ -725,7 +946,8 @@ class PPTGenerationCrew():
                     indicator_chart_images=indicator_chart_images,
                     treatment_gantt_chart_url=treatment_gantt_chart_url,
                     treatment_gantt_data=gantt_data if 'gantt_data' in locals() else None,
-                    template_type=2
+                    template_type=2,
+                    use_chunked_output=use_chunked_output  # 传递分块输出标志
                 )
 
                 if not ppt_data:

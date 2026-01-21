@@ -1,6 +1,12 @@
 import os
-from dotenv import load_dotenv
-load_dotenv()
+
+# 尝试导入dotenv
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv不是必需的，可以直接使用环境变量
+
 from crewai import  LLM
 
 # 通用医疗分析模型 - 用于诊断、文献搜索、药物分析等通用任务 (使用34次)
