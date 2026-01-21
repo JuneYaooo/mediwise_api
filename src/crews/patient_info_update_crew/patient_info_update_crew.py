@@ -15,6 +15,10 @@ import re
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 
+# 🆕 Token管理和数据压缩模块
+from src.utils.token_manager import TokenManager
+from src.utils.data_compressor import PatientDataCompressor
+
 # 初始化 logger
 logger = BeijingLogger().get_logger()
 
@@ -905,27 +909,109 @@ class PatientInfoUpdateCrew():
             verbose=True
         )
 
-    async def update_patient_info(self, user_request: str, current_patient_data: Dict, 
+    async def update_patient_info(self, user_request: str, current_patient_data: Dict,
                                   session_id: str = None) -> Dict:
         """
         更新患者信息的主要方法
-        
+
         Args:
             user_request: 用户的更新请求
             current_patient_data: 当前的患者数据
             session_id: 会话ID
-            
+
         Returns:
             更新后的患者数据，格式与patient_data_crew保持一致
         """
         try:
             logger.info("Starting patient info update process")
             current_date = datetime.now().strftime("%Y-%m-%d")
-            
-            # 使用agent分析并生成修改指令
+
+            # 🆕 初始化Token管理和数据压缩模块
+            token_manager = TokenManager(logger=logger)
+            data_compressor = PatientDataCompressor(logger=logger, token_manager=token_manager)
+            logger.info("✅ 已初始化数据压缩工具")
+
+            # 🆕 压缩患者数据（在传递给LLM前）
+            model_name = 'deepseek-chat'  # 使用general_llm的模型
+
+            # 检查数据大小
+            check_result = token_manager.check_input_limit(current_patient_data, model_name)
+            logger.info(f"📊 患者数据统计:")
+            logger.info(f"  ├─ 估算总tokens: {check_result['total_tokens']}")
+            logger.info(f"  ├─ 模型限制: {check_result['limit']} tokens")
+            logger.info(f"  ├─ 安全限制: {check_result['safe_limit']} tokens")
+            logger.info(f"  ├─ 使用率: {check_result['usage_ratio']:.1%}")
+            logger.info(f"  └─ 需要压缩: {'是 ⚠️' if check_result['compression_needed'] else '否 ✅'}")
+
+            # 如果需要压缩，进行数据压缩
+            compressed_patient_data = current_patient_data
+            if check_result['compression_needed']:
+                logger.warning("=" * 100)
+                logger.warning(f"⚠️ 患者数据超过安全限制，启动自动压缩流程")
+                logger.warning(f"⚠️ 当前: {check_result['total_tokens']} tokens > 安全限制: {check_result['safe_limit']} tokens")
+                logger.warning("=" * 100)
+
+                # 计算目标token数
+                target_tokens = check_result['safe_limit']
+
+                # 压缩各个模块的数据
+                compressed_patient_data = {}
+
+                # 1. 压缩patient_timeline（分配40%的目标token）
+                if "patient_timeline" in current_patient_data:
+                    logger.info(f"📦 开始压缩patient_timeline数据 (目标: {int(target_tokens * 0.4)} tokens)...")
+                    compressed_patient_data["patient_timeline"] = data_compressor.compress_timeline(
+                        current_patient_data["patient_timeline"],
+                        max_tokens=int(target_tokens * 0.4),
+                        model_name=model_name
+                    )
+                    logger.info(f"  ✅ patient_timeline压缩完成")
+
+                # 2. 压缩patient_journey（分配30%的目标token）
+                if "patient_journey" in current_patient_data:
+                    logger.info(f"📦 开始压缩patient_journey数据 (目标: {int(target_tokens * 0.3)} tokens)...")
+                    compressed_patient_data["patient_journey"] = data_compressor.compress_data(
+                        current_patient_data["patient_journey"],
+                        max_tokens=int(target_tokens * 0.3),
+                        model_name=model_name
+                    )
+                    logger.info(f"  ✅ patient_journey压缩完成")
+
+                # 3. 压缩mdt_simple_report（分配30%的目标token）
+                if "mdt_simple_report" in current_patient_data:
+                    logger.info(f"📦 开始压缩mdt_simple_report数据 (目标: {int(target_tokens * 0.3)} tokens)...")
+                    compressed_patient_data["mdt_simple_report"] = data_compressor.compress_data(
+                        current_patient_data["mdt_simple_report"],
+                        max_tokens=int(target_tokens * 0.3),
+                        model_name=model_name
+                    )
+                    logger.info(f"  ✅ mdt_simple_report压缩完成")
+
+                # 保留其他字段
+                for key in current_patient_data:
+                    if key not in ["patient_timeline", "patient_journey", "mdt_simple_report"]:
+                        compressed_patient_data[key] = current_patient_data[key]
+
+                # 重新检查压缩后的token数
+                compressed_check = token_manager.check_input_limit(compressed_patient_data, model_name)
+                logger.info("=" * 100)
+                logger.info(f"✅ 数据压缩完成！")
+                logger.info(f"📊 压缩效果:")
+                logger.info(f"  ├─ 原始tokens: {check_result['total_tokens']}")
+                logger.info(f"  ├─ 压缩后tokens: {compressed_check['total_tokens']}")
+                logger.info(f"  ├─ 压缩比例: {compressed_check['total_tokens']/check_result['total_tokens']:.1%}")
+                logger.info(f"  ├─ 新使用率: {compressed_check['usage_ratio']:.1%}")
+                logger.info(f"  └─ 在限制内: {'是 ✅' if compressed_check['within_limit'] else '否 ❌'}")
+                logger.info("=" * 100)
+            else:
+                logger.info("=" * 100)
+                logger.info(f"✅ 数据量在安全范围内，无需压缩")
+                logger.info("=" * 100)
+
+            # 使用agent分析并生成修改指令（使用压缩后的数据）
             inputs = {
                 "user_request": user_request,
-                "current_patient_data": current_patient_data
+                "current_patient_data": compressed_patient_data  # 🆕 使用压缩后的数据
             }
             
             self.analyze_and_modify_task().interpolate_inputs_and_add_conversation_history(inputs)
