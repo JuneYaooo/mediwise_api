@@ -13,7 +13,7 @@ from pathlib import Path
 
 class QueryDiseaseConfigSchema(BaseModel):
     """查询疾病配置工具的输入参数模型"""
-    disease_identifiers: str = Field(..., description="疾病标识符列表（用逗号分隔），可以是疾病ID或疾病名称。例如：'liver_cancer,肺癌' 或 '肝癌,lung_cancer'")
+    disease_identifiers: str = Field(..., description="疾病名称列表（用逗号分隔）。例如：'肝癌,淋巴瘤' 或 '肝癌'")
     patient_input: Optional[str] = Field(default="", description="可选的患者原始输入文本，用于智能匹配最合适的配置")
 
 
@@ -32,21 +32,16 @@ class QueryDiseaseConfigTool(BaseTool):
 
     name: str = "查询疾病配置工具"
     description: str = """
-    根据疾病标识符（ID或名称）查询详细的疾病配置信息。支持一次查询多个疾病。
+    根据疾病名称查询详细的疾病看板配置信息。支持一次查询多个疾病。
 
     输入参数：
-    - disease_identifiers: 疾病标识符列表（用逗号分隔），可以是疾病ID或疾病名称
-      例如：'liver_cancer,肺癌' 或 '肝癌,lung_cancer,胃癌'
+    - disease_identifiers: 疾病名称列表（用逗号分隔）
+      例如：'肝癌,淋巴瘤' 或 '肝癌'
     - patient_input: (可选) 患者原始输入文本，用于更精确的匹配
 
-    返回多个疾病的完整配置列表，每个疾病包括：
-    - disease_id: 疾病ID
+    返回多个疾病的看板配置列表，每个疾病包括：
     - disease_name: 疾病名称
-    - lab_test_indicators: 实验室检验指标筛选配置
-    - key_decision_indicators: 关键决策指标
-    - highlight_indicators: 重点标注指标
-    - trend_chart_indicators: 趋势折线图指标
-    - mdt_report_indicators: MDT报告指标集
+    - dashboard_description: 看板说明（包含数据提取要求、关键指标、时间轴要求等详细说明）
     """
     args_schema: Type[BaseModel] = QueryDiseaseConfigSchema
 
@@ -58,7 +53,7 @@ class QueryDiseaseConfigTool(BaseTool):
         从Excel加载疾病配置
 
         参数:
-            disease_identifier: 疾病ID或疾病名称
+            disease_identifier: 疾病名称
 
         返回:
             疾病配置字典，如果未找到返回None
@@ -68,8 +63,11 @@ class QueryDiseaseConfigTool(BaseTool):
             return self._config_cache[disease_identifier]
 
         try:
-            # 配置文件路径
-            config_file = Path(__file__).parent.parent.parent / "app" / "config" / "disease_config.xlsx"
+            # 配置文件路径 - 优先使用新配置文件
+            new_config_file = Path(__file__).parent.parent.parent / "app" / "config" / "disease_config_new.xlsx"
+            old_config_file = Path(__file__).parent.parent.parent / "app" / "config" / "disease_config.xlsx"
+
+            config_file = new_config_file if new_config_file.exists() else old_config_file
 
             if not config_file.exists():
                 raise Exception(f"配置文件不存在: {config_file}")
@@ -80,25 +78,41 @@ class QueryDiseaseConfigTool(BaseTool):
 
             # 查找匹配的疾病配置
             for row in range(2, ws.max_row + 1):
-                disease_id = ws.cell(row, 1).value
-                disease_name = ws.cell(row, 2).value
+                # 新格式：只有disease_name和dashboard_description两列
+                if ws.max_column == 2:
+                    disease_name = ws.cell(row, 1).value
 
-                # 支持通过ID或名称匹配
-                if disease_id == disease_identifier or disease_name == disease_identifier:
-                    # 找到匹配的疾病
-                    config = {
-                        "disease_id": str(disease_id).strip() if disease_id else "",
-                        "disease_name": str(disease_name).strip() if disease_name else "",
-                        "lab_test_indicators": self._safe_json_load(ws.cell(row, 3).value),
-                        "key_decision_indicators": self._safe_json_load(ws.cell(row, 4).value),
-                        "highlight_indicators": self._safe_json_load(ws.cell(row, 5).value),
-                        "trend_chart_indicators": self._safe_json_load(ws.cell(row, 6).value),
-                        "mdt_report_indicators": self._safe_json_load(ws.cell(row, 7).value)
-                    }
+                    # 支持通过名称匹配
+                    if disease_name == disease_identifier:
+                        config = {
+                            "disease_name": str(disease_name).strip() if disease_name else "",
+                            "dashboard_description": str(ws.cell(row, 2).value).strip() if ws.cell(row, 2).value else ""
+                        }
 
-                    # 缓存结果
-                    self._config_cache[disease_identifier] = config
-                    return config
+                        # 缓存结果
+                        self._config_cache[disease_identifier] = config
+                        return config
+                else:
+                    # 旧格式：兼容处理
+                    disease_id = ws.cell(row, 1).value
+                    disease_name = ws.cell(row, 2).value
+
+                    # 支持通过ID或名称匹配
+                    if disease_id == disease_identifier or disease_name == disease_identifier:
+                        # 找到匹配的疾病
+                        config = {
+                            "disease_id": str(disease_id).strip() if disease_id else "",
+                            "disease_name": str(disease_name).strip() if disease_name else "",
+                            "lab_test_indicators": self._safe_json_load(ws.cell(row, 3).value),
+                            "key_decision_indicators": self._safe_json_load(ws.cell(row, 4).value),
+                            "highlight_indicators": self._safe_json_load(ws.cell(row, 5).value),
+                            "trend_chart_indicators": self._safe_json_load(ws.cell(row, 6).value),
+                            "mdt_report_indicators": self._safe_json_load(ws.cell(row, 7).value)
+                        }
+
+                        # 缓存结果
+                        self._config_cache[disease_identifier] = config
+                        return config
 
             return None
 
@@ -119,7 +133,7 @@ class QueryDiseaseConfigTool(BaseTool):
         执行查询疾病配置工具
 
         参数:
-            disease_identifiers: 疾病ID或名称列表（用逗号分隔）
+            disease_identifiers: 疾病名称列表（用逗号分隔）
             patient_input: 患者输入文本（可选）
 
         返回:
@@ -129,7 +143,7 @@ class QueryDiseaseConfigTool(BaseTool):
             if not disease_identifiers:
                 return {
                     "status": "error",
-                    "message": "疾病标识符不能为空",
+                    "message": "疾病名称不能为空",
                     "configs": []
                 }
 
@@ -139,7 +153,7 @@ class QueryDiseaseConfigTool(BaseTool):
             if not identifier_list:
                 return {
                     "status": "error",
-                    "message": "没有有效的疾病标识符",
+                    "message": "没有有效的疾病名称",
                     "configs": []
                 }
 
@@ -156,7 +170,7 @@ class QueryDiseaseConfigTool(BaseTool):
 
             # 如果没有找到任何配置，尝试加载通用配置
             if not configs:
-                general_config = self._load_disease_config("general")
+                general_config = self._load_disease_config("通用")
                 if general_config:
                     return {
                         "status": "fallback_to_general",

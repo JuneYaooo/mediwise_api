@@ -933,7 +933,7 @@ class PPTGenerationCrew():
                     logger.info("ℹ️ 主开关已禁用 (ENABLE_NEW_FEATURES=false)，使用原有逻辑")
                 else:
                     # 未设置主开关 - 使用细粒度控制
-                    enable_chunked_output = os.getenv('ENABLE_CHUNKED_OUTPUT', 'auto').lower()
+                    enable_chunked_output = os.getenv('ENABLE_CHUNKED_OUTPUT', 'false').lower()
 
                     use_chunked_output = False
                     if enable_chunked_output == 'true' or enable_chunked_output == '1' or enable_chunked_output == 'yes':

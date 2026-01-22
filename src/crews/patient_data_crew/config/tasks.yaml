@@ -1,6 +1,6 @@
 get_disease_config_task:
   description: >
-    根据患者信息识别疾病并获取相应的配置信息。支持识别多个疾病（主要疾病通常2-3种）。
+    根据患者信息识别疾病并获取相应的看板配置信息。支持识别多个疾病（主要疾病通常2-3种）。
 
     输入信息:
     患者描述: {patient_info}
@@ -18,22 +18,17 @@ get_disease_config_task:
     - 按疾病的重要性排序(主要疾病在前)
 
     步骤3: 批量查询疾病配置
-    - 调用"查询疾病配置工具",输入识别到的所有疾病ID或疾病名称(用逗号分隔)
-    - 例如: 'liver_cancer,肺癌' 或 '肝癌,lung_cancer,胃癌'
+    - 调用"查询疾病配置工具",输入识别到的所有疾病名称(用逗号分隔)
+    - 例如: '肝癌,淋巴瘤' 或 '肝癌'
     - 同时将患者信息作为patient_input参数传入
 
     步骤4: 分析和输出结果
     - 提取并返回所有疾病的配置信息列表,每个疾病包括:
-      * disease_id: 疾病ID
       * disease_name: 疾病名称
-      * lab_test_indicators: 实验室检验指标筛选配置
-      * key_decision_indicators: 关键决策指标
-      * highlight_indicators: 重点标注指标
-      * trend_chart_indicators: 趋势折线图指标
-      * mdt_report_indicators: MDT报告指标集
+      * dashboard_description: 看板说明（包含数据提取要求、关键指标、时间轴要求等详细说明）
 
     注意事项:
-    - 如果无法明确识别任何疾病,返回通用配置(general)
+    - 如果无法明确识别任何疾病,返回通用配置
     - 如果患者信息不足,提示需要补充更多信息
     - 如果只识别到一个疾病也没问题,返回单个疾病的配置列表
     - 如果识别到多个疾病,返回所有疾病的配置列表
@@ -43,25 +38,15 @@ get_disease_config_task:
     {{
       "status": "success",
       "count": 2,
-      "primary_diseases": ["liver_cancer", "lung_cancer"],
+      "primary_diseases": ["肝癌", "淋巴瘤"],
       "configs": [
         {{
-          "disease_id": "liver_cancer",
           "disease_name": "肝癌",
-          "lab_test_indicators": {{}},
-          "key_decision_indicators": [],
-          "highlight_indicators": [],
-          "trend_chart_indicators": [],
-          "mdt_report_indicators": {{}}
+          "dashboard_description": "看板配置说明文本..."
         }},
         {{
-          "disease_id": "lung_cancer",
-          "disease_name": "肺癌",
-          "lab_test_indicators": {{}},
-          "key_decision_indicators": [],
-          "highlight_indicators": [],
-          "trend_chart_indicators": [],
-          "mdt_report_indicators": {{}}
+          "disease_name": "淋巴瘤",
+          "dashboard_description": "看板配置说明文本..."
         }}
       ]
     }}
@@ -125,9 +110,16 @@ process_patient_data_task:
     **疾病配置：**
     输入参数中的disease_config字段包含了识别到的疾病配置信息列表。
     配置格式为: {{"status": "success", "count": N, "configs": [...]}}
-    每个config包含: disease_id, disease_name, lab_test_indicators, key_decision_indicators等字段。
-    根据疾病配置中的指标字段（lab_test_indicators, key_decision_indicators等），调整数据提取的重点。
-    如果患者有多个疾病，需要综合所有疾病的配置进行数据提取。
+    每个config包含: disease_name（疾病名称）, dashboard_description（看板说明，包含数据提取要求、关键指标等详细说明）。
+
+    **重要**：请仔细阅读dashboard_description中的说明，它包含了该疾病的：
+    - 关键指标提取要求
+    - 时间轴构建要求
+    - 重点标注规则
+    - 病历事件回顾维度
+    - 特殊字段提取要求（如手术医院、主刀医生等）
+
+    根据看板说明中的要求，调整数据提取的重点和格式。如果患者有多个疾病，需要综合所有疾病的配置进行数据提取。
 
     **增量更新模式：**
     如果提供了现有时间轴数据，你需要：
@@ -240,11 +232,18 @@ extract_core_points_task:
 
     **疾病配置：**
     输入参数中的disease_config字段包含了识别到的疾病配置信息列表。
-    使用配置中的highlight_indicators和trend_chart_indicators来指导关键信息的提取和标注。
+    每个config包含: disease_name（疾病名称）, dashboard_description（看板说明）。
 
-    1) 患者主要事件的时间轴（简明版）：按日期聚合一个时间点对应一条文本，文本不超过100字；将事件类型标注为"主疾病"或"共病"；文本中的关键实体/治疗/诊断/病理/影像要点需使用**加粗**，重要指标或者异常值需标红（使用疾病配置中的highlight_indicators作为参考，使用<span style="color:#d0021b">值</span>）。主要事件包括但不限于：重要检验/检查/病理结果及相应诊断、手术/放疗/化疗/介入/免疫/靶向等治疗、疾病进展或复发、不良反应、入出院节点、重要门急诊随访等。对于手术事件，如果能获知主刀医生的信息，也需要把主刀医生提取出来，放在专门的字段里。对于胃肠镜等大型检查事件，如果能获知检查所在医院的信息，也需要提取出来，放在专门的字段里。
+    **重要**：请仔细阅读dashboard_description中的说明，特别关注：
+    - 关键指标趋势图要求：哪些指标需要提取时间序列数据
+    - 重点标注规则：哪些内容需要在患者旅程中标红显示
+    - 特殊字段提取：如手术医院、主刀医生、检查医院等
 
-    2) 重要指标的折线数据：从文本与结构化数据中筛选对当前疾病决策最关键的少数数值型指标（使用疾病配置中的trend_chart_indicators作为参考）。按时间升序输出 (time,value) 序列，time 为yyyy-MM-dd或yyyy-MM-dd HH:mm。
+    根据看板说明中的要求来提取和标注关键信息。
+
+    1) 患者主要事件的时间轴（简明版）：按日期聚合一个时间点对应一条文本，文本不超过100字；将事件类型标注为"主疾病"或"共病"；文本中的关键实体/治疗/诊断/病理/影像要点需使用**加粗**，重要指标或者异常值需标红（参考看板说明中的重点标注规则，使用<span style="color:#d0021b">值</span>）。主要事件包括但不限于：重要检验/检查/病理结果及相应诊断、手术/放疗/化疗/介入/免疫/靶向等治疗、疾病进展或复发、不良反应、入出院节点、重要门急诊随访等。对于手术事件，如果能获知主刀医生的信息，也需要把主刀医生提取出来，放在专门的字段里。对于胃肠镜等大型检查事件，如果能获知检查所在医院的信息，也需要提取出来，放在专门的字段里。
+
+    2) 重要指标的折线数据：从文本与结构化数据中筛选对当前疾病决策最关键的少数数值型指标（参考看板说明中的关键指标趋势图要求）。按时间升序输出 (time,value) 序列，time 为yyyy-MM-dd或yyyy-MM-dd HH:mm。
 
     **增量更新模式：**
     如果提供了现有患者时间旅程数据，你需要：
@@ -304,7 +303,14 @@ generate_mdt_report_task:
 
     **疾病配置：**
     输入参数中的disease_config字段包含了识别到的疾病配置信息列表。
-    使用配置中的mdt_report_indicators来确定需要在MDT报告中展示的检验指标。
+    每个config包含: disease_name（疾病名称）, dashboard_description（看板说明）。
+
+    **重要**：请仔细阅读dashboard_description中的说明，特别关注：
+    - 实验室检查要求：需要在MDT报告中展示哪些检验指标
+    - 影像学检查要求：需要展示哪些影像学检查结果
+    - 病历事件回顾维度：报告应该包含哪些维度的信息
+
+    根据看板说明中的要求来组织MDT报告的内容和结构。
 
     **增量更新模式：**
     如果提供了现有MDT报告数据，你需要：
@@ -329,7 +335,7 @@ generate_mdt_report_task:
        - 列出患者的既往病史、手术史、过敏史等
     4. 一级标题：实验室检查
        - 按开单时间分组的表格形式
-       - **重要**：使用疾病配置中的mdt_report_indicators字段，只提取配置中列出的检验指标
+       - **重要**：参考看板说明中的实验室检查要求，提取相关的检验指标
        - 表头：检查项目、开单时间、报告时间、项目名称、结果、参考值(正常区间)、异常提示(阴性、阳性、偏高、偏低)
     5. 一级标题：影像学检查
        - 列出患者的影像学检查结果，以表格形式呈现

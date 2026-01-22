@@ -32,7 +32,7 @@ class GetDiseaseListTool(BaseTool):
     name: str = "获取疾病列表工具"
     description: str = """
     获取所有可用的疾病列表。
-    返回Excel配置文件中所有疾病的名称和ID。
+    返回Excel配置文件中所有疾病的名称。
     此工具不需要任何输入参数，直接调用即可。
     """
     args_schema: Type[BaseModel] = GetDiseaseListSchema
@@ -45,7 +45,7 @@ class GetDiseaseListTool(BaseTool):
         从Excel加载疾病列表并缓存
 
         返回:
-            疾病列表，每项包含 disease_id 和 disease_name
+            疾病列表，每项包含 disease_name
         """
         if self._disease_list_cache is not None:
             return self._disease_list_cache
@@ -65,14 +65,23 @@ class GetDiseaseListTool(BaseTool):
 
             # 从第2行开始读取（第1行是表头）
             for row in range(2, ws.max_row + 1):
-                disease_id = ws.cell(row, 1).value
-                disease_name = ws.cell(row, 2).value
+                # 新格式：只有disease_name和dashboard_description两列
+                if ws.max_column == 2:
+                    disease_name = ws.cell(row, 1).value
+                    if disease_name:
+                        diseases.append({
+                            "disease_name": str(disease_name).strip()
+                        })
+                else:
+                    # 旧格式：兼容处理
+                    disease_id = ws.cell(row, 1).value
+                    disease_name = ws.cell(row, 2).value
 
-                if disease_id and disease_name:
-                    diseases.append({
-                        "disease_id": str(disease_id).strip(),
-                        "disease_name": str(disease_name).strip()
-                    })
+                    if disease_id and disease_name:
+                        diseases.append({
+                            "disease_id": str(disease_id).strip(),
+                            "disease_name": str(disease_name).strip()
+                        })
 
             # 缓存结果
             self._disease_list_cache = diseases
