@@ -224,40 +224,167 @@ process_patient_data_task:
       }},
     }}
 
-  agent: patient_data_processor 
+  agent: patient_data_processor
 
-extract_core_points_task:
+generate_timeline_summary_task:
   description: >
-    基于输入生成"患者时间旅程"数据，输出两个元素：
+    从输入的患者临床描述中提取关键信息，生成简化的时间轴摘要。只输出时间轴的核心信息（id, 时间、标题、摘要、关键指标），不包含详细的data_blocks。
+
+    **疾病配置：**
+    输入参数中的disease_config字段包含了识别到的疾病配置信息列表。
+    配置格式为: {{"status": "success", "count": N, "configs": [...]}}
+    每个config包含: disease_name（疾病名称）, dashboard_description（看板说明）。
+
+    **重要**：请仔细阅读dashboard_description中的说明，特别关注：
+    - 时间轴构建要求：如何组织临床事件
+    - 关键指标提取要求：哪些指标需要在摘要中显示
+
+    **增量更新模式：**
+    如果提供了现有时间轴摘要数据，你需要：
+    1. 保留现有时间轴中的所有历史条目
+    2. 将新的事件添加到时间轴中，按时间顺序排列
+    3. 如果新信息与现有条目相关，更新该条目的摘要信息
+    4. 保持患者基本信息的一致性
+
+    [系统日期]: {current_date}
+    [患者描述]: {patient_info}
+    [现有时间轴摘要]（如有）: {existing_timeline_summary}
+
+    格式化要求：
+    1. 核心要求：构建时间轴时，请严格遵循"临床事件/阶段"为最高层级的原则。一次门诊、一次住院、一个治疗周期应作为一个独立的时间轴条目。
+    2. 每个条目只包含摘要信息，不包含详细的data_blocks
+    3. 为每个条目生成唯一的id（格式：t1, t2, t3...）
+    4. 在summary字段中简要描述该时间点的关键事件（不超过200字）
+    5. 在key_indicators字段中列出最重要的指标（使用markdown格式，异常值标红）
+    6. 标记has_details为true（表示该条目有详细数据需要后续生成）
+
+  expected_output: >
+    返回JSON格式的简化时间轴，包含患者基本信息和时间轴摘要：
+    **重要：所有输出必须使用简体中文，绝对不允许输出Unicode编码符号。**
+
+    {{
+      "patient_info": {{
+        "basic": {{
+          "name": "患者姓名",
+          "age": "年龄",
+          "gender": "性别",
+          "purpose": "就诊目的",
+          "main_complaint": "主诉"
+        }},
+        "medical_history": [
+          {{
+            "type": "疾病史/手术史/过敏史/家族史/社会史/药物史/其他",
+            "name": "具体名称",
+            "time": "yyyy-MM-dd格式",
+            "details": "详细描述"
+          }}
+        ]
+      }},
+      "timeline": [
+        {{
+          "id": "t1",
+          "time_period": {{
+            "start": "yyyy-MM-dd",
+            "end": "yyyy-MM-dd或空"
+          }},
+          "title": "标题（如初诊/复诊/住院/门诊/术后等）",
+          "type": "visit/exam/surgery/medication/other",
+          "location": "医疗机构/科室",
+          "summary": "概要描述（不超过200字），包括疾病状态、关键处置、关键指标、疗效等",
+          "key_indicators": "关键指标（markdown格式，异常值用<span style=\"color:#d0021b\">值↑</span>标红）",
+          "has_details": true,
+          "detail_blocks_info": "简要说明包含哪些类型的数据块（如：检验、检查、病理、影像、用药等）"
+        }}
+      ]
+    }}
+
+  agent: timeline_summary_generator
+
+generate_timeline_details_task:
+  description: >
+    为指定的时间轴条目生成详细的data_blocks数据。基于患者信息和时间轴摘要，提取该时间点的所有详细检验、检查、病理、影像等数据。
+
+    **疾病配置：**
+    输入参数中的disease_config字段包含了识别到的疾病配置信息列表。
+
+    **重要**：请仔细阅读dashboard_description中的说明，特别关注：
+    - 关键指标提取要求：需要提取哪些检验指标
+    - 重点标注规则：哪些值需要标注为异常
+    - 特殊字段提取要求：如手术医院、主刀医生等
+
+    **任务目标：**
+    为指定的时间轴条目（通过timeline_id标识）生成完整的data_blocks数据。
+
+    [系统日期]: {current_date}
+    [患者描述]: {patient_info}
+    [时间轴摘要]: {timeline_summary}
+    [目标时间轴ID]: {target_timeline_id}
+
+    格式化要求：
+    1. 只生成指定timeline_id的详细数据
+    2. 将同类信息合并到单一的data_block中（如所有检验结果放在一个"检验"类型的data_block）
+    3. 不同类型的数据放入不同的data_block（检验、检查、病理、影像、用药等）
+    4. 对于检验指标，提取所有检验值，并标注超出参考范围的值
+    5. 对于影像病理报告，保持原文重要叙述（包括大小、位置等）
+    6. 每个item需要包含file_uuid（来源文件标识）
+
+  expected_output: >
+    返回JSON格式的详细数据块：
+    **重要：所有输出必须使用简体中文，不能包含Unicode编码符号。**
+
+    {{
+      "timeline_id": "t1",
+      "data_blocks": [
+        {{
+          "block_type": "现病史/诊断/检验/检查/病理/影像/用药/处置/手术/随访/医嘱/其他",
+          "block_title": "数据块标题",
+          "items": [
+            {{
+              "name": "项目名称",
+              "value": "检验值或结果",
+              "reference": "参考范围（可选）",
+              "unit": "单位（可选）",
+              "status": "normal/abnormal/critical/pending",
+              "time": "yyyy-MM-dd或yyyy-MM-dd HH:mm",
+              "file_uuid": "来源文件UUID（可选）",
+              "notes": "备注（可选）"
+            }}
+          ]
+        }}
+      ]
+    }}
+
+  agent: timeline_details_generator
+
+extract_patient_journey_task:
+  description: >
+    基于输入生成"患者时间旅程"数据，专注于提取患者主要事件的时间轴。
 
     **疾病配置：**
     输入参数中的disease_config字段包含了识别到的疾病配置信息列表。
     每个config包含: disease_name（疾病名称）, dashboard_description（看板说明）。
 
     **重要**：请仔细阅读dashboard_description中的说明，特别关注：
-    - 关键指标趋势图要求：哪些指标需要提取时间序列数据
     - 重点标注规则：哪些内容需要在患者旅程中标红显示
     - 特殊字段提取：如手术医院、主刀医生、检查医院等
 
     根据看板说明中的要求来提取和标注关键信息。
 
-    1) 患者主要事件的时间轴（简明版）：按日期聚合一个时间点对应一条文本，文本不超过100字；将事件类型标注为"主疾病"或"共病"；文本中的关键实体/治疗/诊断/病理/影像要点需使用**加粗**，重要指标或者异常值需标红（参考看板说明中的重点标注规则，使用<span style="color:#d0021b">值</span>）。主要事件包括但不限于：重要检验/检查/病理结果及相应诊断、手术/放疗/化疗/介入/免疫/靶向等治疗、疾病进展或复发、不良反应、入出院节点、重要门急诊随访等。对于手术事件，如果能获知主刀医生的信息，也需要把主刀医生提取出来，放在专门的字段里。对于胃肠镜等大型检查事件，如果能获知检查所在医院的信息，也需要提取出来，放在专门的字段里。
-
-    2) 重要指标的折线数据：从文本与结构化数据中筛选对当前疾病决策最关键的少数数值型指标（参考看板说明中的关键指标趋势图要求）。按时间升序输出 (time,value) 序列，time 为yyyy-MM-dd或yyyy-MM-dd HH:mm。
+    **任务目标：**
+    提取患者主要事件的时间轴（简明版）：按日期聚合一个时间点对应一条文本，文本不超过100字；将事件类型标注为"主疾病"或"共病"；文本中的关键实体/治疗/诊断/病理/影像要点需使用**加粗**，重要指标或者异常值需标红（参考看板说明中的重点标注规则，使用<span style="color:#d0021b">值</span>）。主要事件包括但不限于：重要检验/检查/病理结果及相应诊断、手术/放疗/化疗/介入/免疫/靶向等治疗、疾病进展或复发、不良反应、入出院节点、重要门急诊随访等。对于手术事件，如果能获知主刀医生的信息，也需要把主刀医生提取出来，放在专门的字段里。对于胃肠镜等大型检查事件，如果能获知检查所在医院的信息，也需要提取出来，放在专门的字段里。
 
     **增量更新模式：**
     如果提供了现有患者时间旅程数据，你需要：
     1. 保留现有时间旅程中的所有历史事件，不要删除已有的事件
     2. 将新的事件与现有时间旅程合并，按时间顺序插入新事件
-    3. 对于重要指标数据，将新的数据点添加到现有指标序列中，保持时间升序
-    4. 如果发现相同日期的事件，应合并而不是重复
-    5. 确保时间旅程的连续性和完整性
+    3. 如果发现相同日期的事件，应合并而不是重复
+    4. 确保时间旅程的连续性和完整性
 
     输入：
     [系统日期]: {current_date}
     [患者文本]: {patient_content}
     [患者结构化数据]: {full_structure_data}
-    [现有患者时间旅程]: {existing_patient_journey}
+    [现有患者时间旅程]: {existing_timeline_journey}
 
     规则：
     - 仅基于提供的信息做客观提取，不得臆测。
@@ -269,33 +396,78 @@ extract_core_points_task:
     - 每个事件需提取来源文件UUID：从full_structure_data的timeline中找到对应时间点的data_blocks.items，提取其file_uuid字段，以{{"file_uuid": "xxx"}}格式放入sources数组。如果一个事件涉及多个来源文件，将所有相关来源放入数组。如果无法确定来源或原始数据中没有file_uuid，则sources为空数组。
 
   expected_output: >
-    返回JSON，包含两个顶级字段timeline_journey和indicator_series：
+    返回JSON数组格式的患者时间旅程：
     注意：所有输出必须使用简体中文，不能包含Unicode编码符号（如\\u4e2d\\u6587等）。如果模型输出包含Unicode编码，必须将其解码为正常的中文字符。
 
-    {{
-      "timeline_journey": [
-        {{
-          "date": "yyyy-MM-dd",
-          "type": "主疾病|共病",
-          "text": "不超过100字；**关键词加粗**；异常值用<span style=\"color:#d0021b\">值</span>标红",
-          "chief_surgeon": "如果是手术事件，且有主刀医生信息，才需要提取主刀医生的名字，否则为空",
-          "examination_hospital": "如果是胃肠镜等大型检查事件，且有检查所在医院信息，才需要提取医院名称，否则为空",
-          "sources": [{{"file_uuid": "来源文件UUID"}}]  // 来源文件数组，从full_structure_data中对应事件的file_uuid提取，可为空数组
-        }}
-      ],
-      "indicator_series": [
-        {{
-          "name": "指标名称",
-          "unit": "单位(可选)",
-          "series": [ {{ "time": "yyyy-MM-dd", "value": 数值, "is_abnormal": 布尔值 }},
-          "normal_min": "正常范围最小值，数值，可选",
-          "normal_max": "正常范围最大值，数值，可选" ]
-        }}
-      ]
-    }}
-    
+    [
+      {{
+        "date": "yyyy-MM-dd",
+        "type": "主疾病|共病",
+        "text": "不超过100字；**关键词加粗**；异常值用<span style=\"color:#d0021b\">值</span>标红",
+        "chief_surgeon": "如果是手术事件，且有主刀医生信息，才需要提取主刀医生的名字，否则为空",
+        "examination_hospital": "如果是胃肠镜等大型检查事件，且有检查所在医院信息，才需要提取医院名称，否则为空",
+        "sources": [{{"file_uuid": "来源文件UUID"}}]
+      }}
+    ]
 
-  agent: core_points_extractor 
+  agent: patient_journey_extractor
+
+extract_indicator_series_task:
+  description: >
+    基于输入提取重要指标的时间序列数据，用于生成趋势图表。
+
+    **疾病配置：**
+    输入参数中的disease_config字段包含了识别到的疾病配置信息列表。
+    每个config包含: disease_name（疾病名称）, dashboard_description（看板说明）。
+
+    **重要**：请仔细阅读dashboard_description中的说明，特别关注：
+    - 关键指标趋势图要求：哪些指标需要提取时间序列数据
+
+    **任务目标：**
+    从文本与结构化数据中筛选对当前疾病决策最关键的少数数值型指标（参考看板说明中的关键指标趋势图要求）。按时间升序输出 (time,value) 序列，time 为yyyy-MM-dd或yyyy-MM-dd HH:mm。
+
+    **增量更新模式：**
+    如果提供了现有指标序列数据，你需要：
+    1. 保留现有指标序列中的所有历史数据点
+    2. 将新的数据点添加到现有指标序列中，保持时间升序
+    3. 如果发现相同时间点的数据，使用最新的值
+    4. 确保数据的连续性和完整性
+
+    输入：
+    [系统日期]: {current_date}
+    [患者文本]: {patient_content}
+    [患者结构化数据]: {full_structure_data}
+    [现有指标序列]: {existing_indicator_series}
+
+    规则：
+    - 仅基于提供的信息做客观提取，不得臆测。
+    - 只提取数值型指标，忽略文本型结果。
+    - 每个指标最多提取30个数据点，优先保留最新和最重要的数据点。
+    - 数据点按时间升序排列。
+    - 标注异常值（is_abnormal字段）。
+    - 如果有参考范围，提取normal_min和normal_max。
+
+  expected_output: >
+    返回JSON数组格式的指标序列：
+    注意：所有输出必须使用简体中文，不能包含Unicode编码符号（如\\u4e2d\\u6587等）。
+
+    [
+      {{
+        "name": "指标名称",
+        "unit": "单位(可选)",
+        "series": [
+          {{
+            "time": "yyyy-MM-dd",
+            "value": 数值,
+            "is_abnormal": 布尔值
+          }}
+        ],
+        "normal_min": "正常范围最小值，数值，可选",
+        "normal_max": "正常范围最大值，数值，可选"
+      }}
+    ]
+
+  agent: indicator_series_extractor 
 
 generate_mdt_report_task:
   description: >

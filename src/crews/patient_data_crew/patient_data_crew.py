@@ -186,9 +186,41 @@ class PatientDataCrew():
         )
 
     @agent
+    def timeline_summary_generator(self) -> Agent:
+        return Agent(
+            config=self.agents_config['timeline_summary_generator'],
+            llm=document_generation_llm,
+            verbose=True
+        )
+
+    @agent
+    def timeline_details_generator(self) -> Agent:
+        return Agent(
+            config=self.agents_config['timeline_details_generator'],
+            llm=document_generation_llm,
+            verbose=True
+        )
+
+    @agent
     def core_points_extractor(self) -> Agent:
         return Agent(
             config=self.agents_config['core_points_extractor'],
+            llm=document_generation_llm,
+            verbose=True
+        )
+
+    @agent
+    def patient_journey_extractor(self) -> Agent:
+        return Agent(
+            config=self.agents_config['patient_journey_extractor'],
+            llm=document_generation_llm,
+            verbose=True
+        )
+
+    @agent
+    def indicator_series_extractor(self) -> Agent:
+        return Agent(
+            config=self.agents_config['indicator_series_extractor'],
             llm=document_generation_llm,
             verbose=True
         )
@@ -221,9 +253,37 @@ class PatientDataCrew():
         )
 
     @task
+    def generate_timeline_summary_task(self) -> Task:
+        return Task(
+            config=self.tasks_config['generate_timeline_summary_task'],
+            context=[self.get_disease_config_task()]  # 依赖疾病配置任务的输出
+        )
+
+    @task
+    def generate_timeline_details_task(self) -> Task:
+        return Task(
+            config=self.tasks_config['generate_timeline_details_task'],
+            context=[self.get_disease_config_task()]  # 依赖疾病配置任务的输出
+        )
+
+    @task
     def extract_core_points_task(self) -> Task:
         return Task(
             config=self.tasks_config['extract_core_points_task'],
+            context=[self.get_disease_config_task()]  # 依赖疾病配置任务的输出
+        )
+
+    @task
+    def extract_patient_journey_task(self) -> Task:
+        return Task(
+            config=self.tasks_config['extract_patient_journey_task'],
+            context=[self.get_disease_config_task()]  # 依赖疾病配置任务的输出
+        )
+
+    @task
+    def extract_indicator_series_task(self) -> Task:
+        return Task(
+            config=self.tasks_config['extract_indicator_series_task'],
             context=[self.get_disease_config_task()]  # 依赖疾病配置任务的输出
         )
 
@@ -680,54 +740,199 @@ class PatientDataCrew():
             # 发送疾病配置识别完成进度
             yield {"type": "progress", "stage": "disease_config_completed", "message": "疾病配置识别完成", "progress": 45}
 
-            # ========== 阶段3: 患者数据处理（时间轴生成） ==========
+            # ========== 阶段3: 患者数据处理（时间轴生成 - 分层处理） ==========
             patient_data_processing_start_time = time.time()
             logger.info("-" * 80)
-            logger.info("【阶段3】开始患者数据处理（时间轴生成）")
+            logger.info("【阶段3】开始患者数据处理（时间轴生成 - 分层处理）")
             logger.info("-" * 80)
 
             # 发送进度更新
-            yield {"type": "progress", "stage": "timeline_generation", "message": "正在生成患者时间轴", "progress": 50}
+            yield {"type": "progress", "stage": "timeline_generation", "message": "正在生成患者时间轴摘要", "progress": 50}
 
-            # 🆕 压缩现有时间轴数据（可选功能）
-            compressed_timeline = existing_timeline  # 默认使用原始数据
-            if enable_compression and data_compressor and existing_timeline and len(existing_timeline) > 0:
-                try:
-                    compressed_timeline = data_compressor.compress_timeline(
-                        existing_timeline,
-                        max_tokens=30000,
-                        model_name='deepseek-chat'
-                    )
-                    logger.info(f"✅ 时间轴压缩完成: {len(existing_timeline)} → {len(compressed_timeline)} 条记录")
-                except Exception as e:
-                    logger.warning(f"⚠️ 时间轴压缩失败，使用原始数据: {e}")
-                    compressed_timeline = existing_timeline
+            # ========== 阶段3.1: 生成时间轴摘要 ==========
+            logger.info("-" * 80)
+            logger.info("【阶段3.1】开始生成时间轴摘要")
+            logger.info("-" * 80)
 
-            # 步骤2: 执行患者数据处理任务，将疾病配置作为上下文传递
-            inputs = {
-                "patient_info": compressed_patient_info,  # 🆕 使用压缩后的数据
-                "patient_timeline": patient_timeline,
+            # 提取现有时间轴的摘要（只保留关键字段，不包含data_blocks）
+            existing_timeline_summary = []
+            if existing_timeline and len(existing_timeline) > 0:
+                for entry in existing_timeline:
+                    summary_entry = {
+                        "id": entry.get("id"),
+                        "time_period": entry.get("time_period"),
+                        "title": entry.get("title"),
+                        "type": entry.get("type"),
+                        "location": entry.get("location"),
+                        "summary": entry.get("summary"),
+                        "key_indicators": entry.get("key_indicators"),
+                        "has_details": True  # 标记已有详细数据
+                    }
+                    existing_timeline_summary.append(summary_entry)
+                logger.info(f"从现有时间轴中提取了 {len(existing_timeline_summary)} 个摘要条目")
+            else:
+                logger.info("没有现有时间轴数据，将创建新的时间轴")
+
+            # 执行时间轴摘要生成任务
+            summary_inputs = {
+                "patient_info": compressed_patient_info,
                 "current_date": current_date,
-                "existing_timeline": compressed_timeline,  # 🆕 使用压缩后的时间轴
-                "disease_config": disease_config_data  # 传递疾病配置
+                "existing_timeline_summary": existing_timeline_summary,
+                "disease_config": disease_config_data
             }
-            self.process_patient_data_task().interpolate_inputs_and_add_conversation_history(inputs)
+            self.generate_timeline_summary_task().interpolate_inputs_and_add_conversation_history(summary_inputs)
+            timeline_summary_result = self.timeline_summary_generator().execute_task(self.generate_timeline_summary_task())
 
-            # 执行任务
-            patient_data_result = self.patient_data_processor().execute_task(self.process_patient_data_task())
+            # 解析时间轴摘要结果
+            timeline_summary_data = JsonUtils.safe_parse_json(timeline_summary_result, debug_prefix="Timeline summary generation")
+            if timeline_summary_data:
+                timeline_summary_data = JsonUtils._decode_unicode_in_dict(timeline_summary_data)
+                logger.info(f"成功生成时间轴摘要，包含 {len(timeline_summary_data.get('timeline', []))} 个条目")
+            else:
+                logger.error("时间轴摘要生成失败")
+                timeline_summary_data = {"patient_info": {}, "timeline": []}
+
+            # 发送摘要生成完成进度
+            yield {"type": "progress", "stage": "timeline_summary_completed", "message": "时间轴摘要生成完成", "progress": 55}
+
+            # ========== 阶段3.2: 并发生成详细数据 ==========
+            logger.info("-" * 80)
+            logger.info("【阶段3.2】开始并发生成时间轴详细数据")
+            logger.info("-" * 80)
+
+            timeline_entries = timeline_summary_data.get("timeline", [])
+
+            # 识别需要生成详细数据的条目（新增的条目）
+            entries_need_details = []
+            existing_timeline_ids = [e.get("id") for e in existing_timeline_summary]
+
+            for entry in timeline_entries:
+                timeline_id = entry.get("id")
+                # 只为新增的条目生成详细数据（不在existing_timeline_summary中的条目）
+                if timeline_id not in existing_timeline_ids:
+                    entries_need_details.append(entry)
+                    logger.debug(f"条目 {timeline_id} 是新增条目，需要生成详细数据")
+                else:
+                    logger.debug(f"条目 {timeline_id} 已存在，跳过详细数据生成")
+
+            logger.info(f"共有 {len(timeline_entries)} 个时间轴条目，其中 {len(entries_need_details)} 个需要生成详细数据")
+
+            # 分批并发处理详细数据生成
+            batch_size = 3  # 每批处理3个条目
+            all_details = {}  # 存储所有详细数据，key为timeline_id
+
+            if entries_need_details:
+                # 定义单个条目的详细数据生成函数
+                def generate_details_for_entry(entry):
+                    try:
+                        timeline_id = entry.get("id")
+                        logger.info(f"开始生成条目 {timeline_id} 的详细数据")
+
+                        # 🚨 重要：为每个线程创建新的 Task 实例，避免线程安全问题
+                        detail_task = Task(
+                            config=self.tasks_config['generate_timeline_details_task'],
+                            context=[self.get_disease_config_task()]
+                        )
+
+                        detail_inputs = {
+                            "patient_info": compressed_patient_info,
+                            "current_date": current_date,
+                            "timeline_summary": timeline_summary_data,
+                            "target_timeline_id": timeline_id,
+                            "disease_config": disease_config_data
+                        }
+                        detail_task.interpolate_inputs_and_add_conversation_history(detail_inputs)
+                        detail_result = self.timeline_details_generator().execute_task(detail_task)
+
+                        # 解析详细数据
+                        detail_data = JsonUtils.safe_parse_json(detail_result, debug_prefix=f"Timeline details for {timeline_id}")
+                        if detail_data:
+                            detail_data = JsonUtils._decode_unicode_in_dict(detail_data)
+                            logger.info(f"成功生成条目 {timeline_id} 的详细数据，包含 {len(detail_data.get('data_blocks', []))} 个数据块")
+                            return (timeline_id, detail_data.get("data_blocks", []))
+                        else:
+                            logger.warning(f"条目 {timeline_id} 的详细数据生成失败")
+                            return (timeline_id, [])
+                    except Exception as e:
+                        logger.error(f"生成条目 {entry.get('id')} 的详细数据时出错: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+                        return (entry.get("id"), [])
+
+                # 获取最大并发数
+                max_concurrent = min(self.max_concurrency, len(entries_need_details))
+                logger.info(f"使用 {max_concurrent} 个并发worker处理 {len(entries_need_details)} 个条目")
+
+                # 分批处理
+                completed_count = 0
+                for batch_start in range(0, len(entries_need_details), batch_size):
+                    batch_entries = entries_need_details[batch_start:batch_start + batch_size]
+                    batch_num = batch_start // batch_size + 1
+                    total_batches = (len(entries_need_details) + batch_size - 1) // batch_size
+
+                    logger.info(f"处理第 {batch_num}/{total_batches} 批，包含 {len(batch_entries)} 个条目")
+
+                    # 使用线程池并发处理当前批次
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_concurrent, len(batch_entries))) as executor:
+                        future_to_entry = {executor.submit(generate_details_for_entry, entry): entry for entry in batch_entries}
+
+                        for future in concurrent.futures.as_completed(future_to_entry):
+                            entry = future_to_entry[future]
+                            try:
+                                timeline_id, data_blocks = future.result()
+                                all_details[timeline_id] = data_blocks
+                                completed_count += 1
+                                logger.info(f"完成 {completed_count}/{len(entries_need_details)} 个条目的详细数据生成")
+
+                                # 发送详细数据生成进度（55-65%之间）
+                                detail_progress = 55 + int(10 * completed_count / len(entries_need_details))
+                                yield {"type": "progress", "stage": "timeline_details_generation",
+                                       "message": f"正在生成详细数据 {completed_count}/{len(entries_need_details)}",
+                                       "progress": detail_progress}
+                            except Exception as e:
+                                logger.error(f"处理条目 {entry.get('id')} 的详细数据时出错: {e}")
+
+            # ========== 阶段3.3: 合并摘要和详细数据 ==========
+            logger.info("-" * 80)
+            logger.info("【阶段3.3】开始合并摘要和详细数据")
+            logger.info("-" * 80)
+
+            # 合并摘要和详细数据
+            final_timeline = []
+            for entry in timeline_entries:
+                timeline_id = entry.get("id")
+                # 创建完整的时间轴条目
+                full_entry = dict(entry)  # 复制摘要数据
+
+                # 添加详细数据
+                if timeline_id in all_details:
+                    # 新生成的详细数据
+                    full_entry["data_blocks"] = all_details[timeline_id]
+                elif existing_timeline and timeline_id in [e.get("id") for e in existing_timeline]:
+                    # 如果是现有条目，从existing_timeline中获取data_blocks
+                    for existing_entry in existing_timeline:
+                        if existing_entry.get("id") == timeline_id:
+                            full_entry["data_blocks"] = existing_entry.get("data_blocks", [])
+                            break
+                else:
+                    # 没有详细数据
+                    full_entry["data_blocks"] = []
+
+                final_timeline.append(full_entry)
+
+            # 构建最终的parsed_result
+            parsed_result = {
+                "patient_info": timeline_summary_data.get("patient_info", {}),
+                "timeline": final_timeline
+            }
+
+            logger.info(f"成功合并时间轴数据，最终包含 {len(final_timeline)} 个完整条目")
 
             # 记录患者数据处理耗时
             patient_data_processing_duration = time.time() - patient_data_processing_start_time
             logger.info("-" * 80)
             logger.info(f"【阶段3】患者数据处理完成，耗时: {patient_data_processing_duration:.2f} 秒 ({patient_data_processing_duration/60:.2f} 分钟)")
             logger.info("-" * 80)
-
-            # 解析结果，确保其为有效的JSON
-            parsed_result = JsonUtils.safe_parse_json(patient_data_result, debug_prefix="Patient data processing")
-
-            # 额外的Unicode清理步骤，确保没有遗漏的Unicode编码
-            if parsed_result:
-                parsed_result = JsonUtils._decode_unicode_in_dict(parsed_result)
 
             # 发送时间轴生成完成进度
             yield {"type": "progress", "stage": "timeline_generation_completed", "message": "患者时间轴生成完成", "progress": 65}
@@ -755,45 +960,110 @@ class PatientDataCrew():
                     logger.warning(f"⚠️ 患者旅程压缩失败，使用原始数据: {e}")
                     compressed_journey = existing_patient_journey
 
-            # 执行"患者时间旅程"任务
-            special_parsed_result = None
+            # 拆分现有患者旅程数据为 timeline_journey 和 indicator_series
+            existing_timeline_journey = []
+            existing_indicator_series = []
+            if compressed_journey:
+                if isinstance(compressed_journey, dict):
+                    existing_timeline_journey = compressed_journey.get("timeline_journey", [])
+                    existing_indicator_series = compressed_journey.get("indicator_series", [])
+                elif isinstance(compressed_journey, list):
+                    # 兼容旧格式：如果是列表，假设是 timeline_journey
+                    existing_timeline_journey = compressed_journey
+                    logger.warning("现有患者旅程数据是列表格式，将其视为 timeline_journey")
+
+            # 执行"患者时间旅程"任务（只提取时间轴）
+            timeline_journey_result = None
             try:
-                core_inputs = {
+                journey_inputs = {
                     "current_date": current_date,
                     "patient_content": compressed_patient_info,  # 🆕 使用压缩后的数据
                     "full_structure_data": parsed_result if parsed_result else {},
-                    "existing_patient_journey": compressed_journey,  # 🆕 使用压缩后的旅程
+                    "existing_timeline_journey": existing_timeline_journey,  # 🆕 只传入时间轴数据
                     "disease_config": disease_config_data  # 传递疾病配置
                 }
-                self.extract_core_points_task().interpolate_inputs_and_add_conversation_history(core_inputs)
-                special_result = self.core_points_extractor().execute_task(self.extract_core_points_task())
-                special_parsed_result = JsonUtils.safe_parse_json(special_result, debug_prefix="Patient journey extraction")
-                
+                self.extract_patient_journey_task().interpolate_inputs_and_add_conversation_history(journey_inputs)
+                journey_result = self.patient_journey_extractor().execute_task(self.extract_patient_journey_task())
+                timeline_journey_result = JsonUtils.safe_parse_json(journey_result, debug_prefix="Patient journey extraction")
+
                 # 额外的Unicode清理步骤和结构验证
-                if special_parsed_result:
-                    special_parsed_result = JsonUtils._decode_unicode_in_dict(special_parsed_result)
-                    # 验证是否包含预期的字段
-                    if isinstance(special_parsed_result, dict):
-                        expected_fields = ["timeline_journey", "indicator_series"]
-                        missing_fields = [field for field in expected_fields if field not in special_parsed_result]
-                        if missing_fields:
-                            logger.warning(f"患者时间旅程JSON缺少字段: {missing_fields}")
+                if timeline_journey_result:
+                    timeline_journey_result = JsonUtils._decode_unicode_in_dict(timeline_journey_result)
+                    # 验证结果是否为列表
+                    if isinstance(timeline_journey_result, list):
+                        logger.info(f"成功提取患者时间旅程，包含{len(timeline_journey_result)}个时间节点")
+                    elif isinstance(timeline_journey_result, dict):
+                        # 如果返回的是字典，尝试提取 timeline_journey 字段
+                        if "timeline_journey" in timeline_journey_result:
+                            timeline_journey_result = timeline_journey_result["timeline_journey"]
+                            logger.info(f"从字典中提取患者时间旅程，包含{len(timeline_journey_result)}个时间节点")
                         else:
-                            logger.info(f"成功提取患者时间旅程，包含{len(special_parsed_result.get('timeline_journey', []))}个时间节点和{len(special_parsed_result.get('indicator_series', []))}个指标序列")
-                    elif isinstance(special_parsed_result, list):
-                        # 🚨 修复：如果 LLM 返回的是列表，将其包装为正确的字典格式
-                        logger.warning("患者时间旅程解析结果是列表格式，将其包装为字典格式（timeline_journey）")
-                        special_parsed_result = {
-                            "timeline_journey": special_parsed_result,
-                            "indicator_series": []  # indicator_series 丢失了，设为空数组
-                        }
-                        logger.warning("⚠️ indicator_series 数据丢失，LLM 返回格式不正确")
+                            logger.warning("患者时间旅程解析结果是字典但缺少 timeline_journey 字段")
+                            timeline_journey_result = []
                     else:
-                        logger.warning("患者时间旅程解析结果不是字典格式")
+                        logger.warning("患者时间旅程解析结果格式不正确")
+                        timeline_journey_result = []
                 else:
                     logger.warning("患者时间旅程解析结果为空")
+                    timeline_journey_result = []
             except Exception as e:
                 logger.error(f"Error in patient journey extraction: {e}")
+                timeline_journey_result = []
+
+            # 发送患者旅程提取完成进度
+            yield {"type": "progress", "stage": "patient_journey_completed", "message": "患者旅程数据提取完成", "progress": 75}
+
+            # ========== 阶段4.5: 指标序列提取 ==========
+            logger.info("-" * 80)
+            logger.info("【阶段4.5】开始指标序列提取")
+            logger.info("-" * 80)
+
+            # 发送进度更新
+            yield {"type": "progress", "stage": "indicator_series", "message": "正在提取关键指标序列", "progress": 77}
+
+            # 执行"指标序列提取"任务
+            indicator_series_result = None
+            try:
+                indicator_inputs = {
+                    "current_date": current_date,
+                    "patient_content": compressed_patient_info,  # 🆕 使用压缩后的数据
+                    "full_structure_data": parsed_result if parsed_result else {},
+                    "existing_indicator_series": existing_indicator_series,  # 🆕 只传入指标序列数据
+                    "disease_config": disease_config_data  # 传递疾病配置
+                }
+                self.extract_indicator_series_task().interpolate_inputs_and_add_conversation_history(indicator_inputs)
+                indicator_result = self.indicator_series_extractor().execute_task(self.extract_indicator_series_task())
+                indicator_series_result = JsonUtils.safe_parse_json(indicator_result, debug_prefix="Indicator series extraction")
+
+                # 额外的Unicode清理步骤和结构验证
+                if indicator_series_result:
+                    indicator_series_result = JsonUtils._decode_unicode_in_dict(indicator_series_result)
+                    # 验证结果是否为列表
+                    if isinstance(indicator_series_result, list):
+                        logger.info(f"成功提取指标序列，包含{len(indicator_series_result)}个指标")
+                    elif isinstance(indicator_series_result, dict):
+                        # 如果返回的是字典，尝试提取 indicator_series 字段
+                        if "indicator_series" in indicator_series_result:
+                            indicator_series_result = indicator_series_result["indicator_series"]
+                            logger.info(f"从字典中提取指标序列，包含{len(indicator_series_result)}个指标")
+                        else:
+                            logger.warning("指标序列解析结果是字典但缺少 indicator_series 字段")
+                            indicator_series_result = []
+                    else:
+                        logger.warning("指标序列解析结果格式不正确")
+                        indicator_series_result = []
+                else:
+                    logger.warning("指标序列解析结果为空")
+                    indicator_series_result = []
+            except Exception as e:
+                logger.error(f"Error in indicator series extraction: {e}")
+                indicator_series_result = []
+
+            # 合并患者旅程和指标序列结果
+            special_parsed_result = {
+                "timeline_journey": timeline_journey_result if timeline_journey_result else [],
+                "indicator_series": indicator_series_result if indicator_series_result else []
+            }
 
             # 记录患者旅程提取耗时
             patient_journey_duration = time.time() - patient_journey_start_time
