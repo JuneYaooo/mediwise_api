@@ -18,9 +18,9 @@ general_llm = LLM(
 
 # 文档生成专用模型 - 用于患者数据结构化、PPT/Word生成等文档处理任务 (使用8次)
 document_generation_llm = LLM(
-		model=os.getenv('ONLINE_GEMINI_MODEL_NAME'),
-		api_key=os.getenv('ONLINE_GEMINI_API_KEY'),
-		base_url=os.getenv('ONLINE_GEMINI_BASE_URL'),
+		model=os.getenv('DOCUMENT_GENERATION_MODEL_NAME'),
+		api_key=os.getenv('DOCUMENT_GENERATION_API_KEY'),
+		base_url=os.getenv('DOCUMENT_GENERATION_BASE_URL'),
 		max_tokens=65535,
 		temperature=0.1,
         timeout=300
