@@ -1,3 +1,173 @@
+analyze_modification_summary_task:
+  description: >
+    分析用户的修改需求，识别所有需要修改的位置，返回简单明了的修改摘要列表。
+
+    【任务说明】
+    这是修改流程的第一步，你需要：
+    1. 理解用户的修改需求
+    2. 识别所有需要修改的数据位置
+    3. 为每个修改生成简单明了的摘要描述
+    4. 不需要生成详细的修改指令，只需要说明"在哪里修改什么"
+
+    【数据结构说明】
+    - patient_timeline: 包含patient_info(基本信息和病史)和timeline(详细时间轴事件)
+    - patient_journey: 包含timeline_journey(患者时间旅程)和indicator_series(核心指标趋势)
+    - mdt_simple_report: MDT报告的结构化内容
+
+    【用户修改请求】
+    {user_request}
+
+    【当前患者数据】
+    {current_patient_data}
+
+    【摘要要求】
+    1. 简单明了：每个修改用一句话说清楚"在哪里修改什么"
+    2. 位置清晰：明确指出修改的位置（如"timeline[0]的标题"、"患者旅程2024-01-15的事件"）
+    3. 内容明确：说明要修改的内容和目标值（如"将日期从2024-01-15改为2025-01-15"）
+    4. 识别所有：不要遗漏任何需要修改的位置
+    5. 考虑关联：如果修改一处需要同步更新其他位置，要一并列出
+
+  expected_output: >
+    返回JSON数组格式的修改摘要列表：
+
+    [
+      {{
+        "id": "m1",
+        "target_module": "patient_timeline/patient_journey/mdt_simple_report",
+        "target_location": "简单描述修改位置，如'timeline[0]的标题'、'患者旅程2024-01-15的事件'",
+        "modification_type": "修改类型，如'修改日期'、'修改检验值'、'删除记录'、'修改文本'",
+        "brief_description": "简要描述修改内容，如'将2024-01-15改为2025-01-15'、'将白细胞值从5.2改为6.0'"
+      }}
+    ]
+
+    示例：
+    用户请求："把2024年1月的门诊记录日期改为2025年1月"
+
+    返回：
+    [
+      {{
+        "id": "m1",
+        "target_module": "patient_timeline",
+        "target_location": "timeline[0]的开始日期",
+        "modification_type": "修改日期",
+        "brief_description": "将2024-01-15改为2025-01-15"
+      }},
+      {{
+        "id": "m2",
+        "target_module": "patient_timeline",
+        "target_location": "timeline[0]的结束日期",
+        "modification_type": "修改日期",
+        "brief_description": "将2024-01-20改为2025-01-20"
+      }},
+      {{
+        "id": "m3",
+        "target_module": "patient_journey",
+        "target_location": "患者旅程2024-01-15的事件日期",
+        "modification_type": "修改日期",
+        "brief_description": "将2024-01-15改为2025-01-15"
+      }}
+    ]
+
+  agent: modification_summary_analyzer
+
+generate_modification_details_task:
+  description: >
+    为指定的修改摘要生成详细的修改指令。基于摘要中的修改描述和原始患者数据，生成精确的修改指令。
+
+    【任务说明】
+    这是修改流程的第二步，你需要：
+    1. 查看修改摘要中的 target_location 和 brief_description
+    2. 从原始患者数据中找到精确的修改位置
+    3. 生成详细的修改指令（包括精确的JSON路径、操作类型、新值等）
+
+    【重要提示】
+    1. 修改摘要中的 target_location 和 brief_description 说明了要修改什么
+    2. 你需要根据这些描述，从原始数据中找到精确的位置
+    3. 生成的修改指令要包含完整的JSON路径和操作细节
+    4. 对于文本内容的修改，需要提供前导上下文确保精确定位
+
+    【路径前缀规范】
+    - 对于patient_timeline模块：路径应该以timeline或patient_info开头，不要加patient_timeline前缀
+    - 对于patient_journey模块：路径应该以timeline_journey或indicator_series开头，不要加patient_journey前缀
+    - 对于mdt_simple_report模块：路径应该直接以[index]开头访问数组元素，不要加mdt_simple_report前缀
+
+    【路径索引验证规范】
+    生成路径时必须严格验证数组索引：
+    1. 检查实际数据中数组的长度，索引不能超出范围
+    2. 例如：如果timeline只有3个元素(索引0-2)，则timeline[3]是无效路径
+    3. 生成路径前，必须在current_patient_data中验证每一级索引的有效性
+
+    【最小上下文定位原则】
+    对于文本内容的修改：
+    - leading_context: 目标内容前面的最小上下文文本（通常3-5个字符即可）
+    - target_content: 要修改的具体内容
+    - trailing_context: 目标内容后面的上下文文本（仅在前导上下文不唯一时使用）
+
+    【输入】
+    [当前患者数据]: {current_patient_data}
+    [修改摘要列表]: {modification_summary}
+    [目标修改ID列表]: {target_modification_ids}
+
+    【任务要求】
+    1. 只生成指定modification_ids的详细指令
+    2. 根据摘要中的描述，从原始数据中精确定位修改位置
+    3. 生成完整的修改指令，包括所有必需字段
+    4. 验证路径的有效性，确保索引不超出范围
+
+  expected_output: >
+    返回JSON数组格式的详细修改指令：
+
+    [
+      {{
+        "id": "m1",
+        "target_module": "patient_timeline/patient_journey/mdt_simple_report",
+        "target_path": "具体的JSON路径，如patient_info.basic.name或timeline[0].title",
+        "action": "set/modify_text/delete",
+        "new_value": "新的值（如果是delete则为null）",
+        "condition": {{"key": "value"}} 或 null,
+        "leading_context": "前导上下文文本（用于modify_text操作）",
+        "target_content": "要修改的具体内容（用于modify_text操作）",
+        "trailing_context": "后导上下文文本（仅在必要时使用）",
+        "description": "修改描述"
+      }}
+    ]
+
+    示例1 - 简单字段修改：
+    摘要：{{"id": "m1", "target_location": "timeline[0]的开始日期", "brief_description": "将2024-01-15改为2025-01-15"}}
+
+    明细：
+    {{
+      "id": "m1",
+      "target_module": "patient_timeline",
+      "target_path": "timeline[0].time_period.start",
+      "action": "set",
+      "new_value": "2025-01-15",
+      "condition": null,
+      "leading_context": null,
+      "target_content": null,
+      "trailing_context": null,
+      "description": "修改timeline[0]的开始日期从2024-01-15改为2025-01-15"
+    }}
+
+    示例2 - 文本内容修改：
+    摘要：{{"id": "m2", "target_location": "timeline[0]的标题", "brief_description": "将'门诊'改为'住院'"}}
+
+    明细：
+    {{
+      "id": "m2",
+      "target_module": "patient_timeline",
+      "target_path": "timeline[0].title",
+      "action": "modify_text",
+      "new_value": "住院",
+      "condition": null,
+      "leading_context": "2024年1月",
+      "target_content": "门诊",
+      "trailing_context": "复查",
+      "description": "修改timeline[0]标题中的'门诊'为'住院'"
+    }}
+
+  agent: modification_details_generator
+
 analyze_and_modify_task:
   description: >
     分析用户的修改需求并返回具体的修改指令，支持复杂的多处修改场景。

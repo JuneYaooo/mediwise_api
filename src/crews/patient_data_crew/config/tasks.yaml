@@ -134,6 +134,9 @@ process_patient_data_task:
     [当前患者时间轴]: {patient_timeline}
     [现有时间轴数据]（如有）: {existing_timeline}
 
+    **重要提示：**
+    患者描述中可能包含"会诊目的："或"就诊目的："标签，请务必提取其后的内容并填充到patient_info.basic.purpose字段中。如果没有明确标注，请从患者描述中识别并提取就诊目的相关信息。
+
     格式化要求：
     1.核心要求：构建时间轴时，请严格遵循“临床事件/阶段”为最高层级的原则。一次门诊、一次住院、一个治疗周期应作为一个独立的时间轴条目（timeline entry）。禁止将同一次临床事件中的不同检查类型（如检验、影像）拆分成多个时间轴条目。比如初诊初治、xx手术治疗、
       正确做法：将为同一临床目的、在相近时间内完成的不同类型的诊疗活动，归并到同一个时间轴条目下，并使用该临床事件（如“门诊复查”）作为标题title。条目内部再使用不同的data_blocks（如“检验”、“检查”）来组织不同类型的数据。
@@ -249,6 +252,9 @@ generate_timeline_summary_task:
     [系统日期]: {current_date}
     [患者描述]: {patient_info}
     [现有时间轴摘要]（如有）: {existing_timeline_summary}
+
+    **重要提示：**
+    患者描述中可能包含"会诊目的："或"就诊目的："标签，请务必提取其后的内容并填充到patient_info.basic.purpose字段中。如果没有明确标注，请从患者描述中识别并提取就诊目的相关信息。
 
     格式化要求：
     1. 核心要求：构建时间轴时，请严格遵循"临床事件/阶段"为最高层级的原则。一次门诊、一次住院、一个治疗周期应作为一个独立的时间轴条目。
@@ -411,6 +417,105 @@ extract_patient_journey_task:
     ]
 
   agent: patient_journey_extractor
+
+generate_patient_journey_summary_task:
+  description: >
+    从输入的患者数据中提取患者时间旅程的摘要信息。输出事件的核心信息：日期、事件类型、事件描述。
+
+    **疾病配置：**
+    输入参数中的disease_config字段包含了识别到的疾病配置信息列表。
+
+    **增量更新模式：**
+    如果提供了现有患者时间旅程摘要数据，你需要：
+    1. 保留现有时间旅程中的所有历史事件
+    2. 将新的事件添加到时间旅程中，按时间顺序排列
+    3. 如果发现相同日期的事件，应合并而不是重复
+    4. 确保时间旅程的连续性和完整性
+
+    输入：
+    [系统日期]: {current_date}
+    [患者文本]: {patient_content}
+    [患者结构化数据]: {full_structure_data}
+    [现有患者时间旅程摘要]（如有）: {existing_journey_summary}
+
+    格式化要求：
+    1. 提取所有主要事件的日期
+    2. 为每个事件生成唯一的id（格式：j1, j2, j3...）
+    3. 识别事件类型（主疾病/共病）
+    4. **重要**：为每个事件生成一段简要的事件描述（event_description），说明这是什么事件（如"肝癌根治性切除术"、"第3次TACE治疗"、"上腹部CT复查"等）。这个描述将用于后续的明细生成，让模型知道要为哪个具体事件生成详细信息。
+    5. 不需要提取详细的文本、特殊字段、来源文件等信息，这些将在明细生成阶段提取
+
+  expected_output: >
+    返回JSON数组格式的患者时间旅程摘要：
+    **重要：所有输出必须使用简体中文，绝对不允许输出Unicode编码符号。**
+
+    [
+      {{
+        "id": "j1",
+        "date": "yyyy-MM-dd",
+        "type": "主疾病|共病",
+        "event_description": "简要的事件描述，说明这是什么事件（如：肝癌根治性切除术、第3次TACE治疗、上腹部CT复查等）"
+      }}
+    ]
+
+  agent: patient_journey_summary_generator
+
+generate_patient_journey_details_task:
+  description: >
+    为指定的患者时间旅程事件生成完整的详细信息。基于原始患者数据、时间旅程摘要（特别是事件描述），提取该事件的所有详细信息。
+
+    **疾病配置：**
+    输入参数中的disease_config字段包含了识别到的疾病配置信息列表。
+
+    **重要**：请仔细阅读dashboard_description中的说明，特别关注：
+    - 重点标注规则：哪些内容需要在患者旅程中标红显示
+    - 特殊字段提取：如手术医院、主刀医生、检查医院等
+
+    **任务目标：**
+    为指定的事件ID列表生成完整的详细信息，包括：
+    1. 详细文本描述（不超过100字，关键词**加粗**，异常值标红）
+    2. 特殊字段（如手术医生、检查医院等）
+    3. 来源文件UUID
+
+    **重要提示：**
+    1. 时间旅程摘要中的 event_description 字段说明了这是什么事件（如"肝癌根治性切除术"、"第3次TACE治疗"、"上腹部CT复查"等）
+    2. 你需要根据这个事件描述，从原始患者数据（patient_content）和结构化数据（full_structure_data）中找到对应的详细信息
+    3. 生成的详细文本不需要完全照搬事件描述，而是要基于事件描述去原始数据中提取更详细、更丰富的信息
+    4. 例如：如果事件描述是"肝癌根治性切除术"，你需要从原始数据中找到这次手术的详细信息（手术时间、主刀医生、手术方式、术中情况、术后病理等），然后生成一段不超过100字的高信息密度文本
+
+    输入：
+    [系统日期]: {current_date}
+    [患者原始文本]: {patient_content}
+    [患者结构化数据]: {full_structure_data}
+    [时间旅程摘要]: {journey_summary}  # 包含 id、date、type、event_description
+    [目标事件ID列表]: {target_event_ids}
+
+    格式化要求：
+    1. 只生成指定event_ids的详细信息
+    2. 根据摘要中的event_description，从原始数据中提取对应事件的详细信息
+    3. 文本不超过100字，高信息密度
+    4. 关键词（如疾病名、治疗方式、关键结论）需**加粗**
+    5. 异常值需标红（<span style="color:#d0021b">值</span>）
+    6. 提取特殊字段：
+       - 如果是手术事件，提取主刀医生信息
+       - 如果是胃肠镜等大型检查事件，提取检查医院信息
+    7. 提取来源文件UUID：从full_structure_data的timeline中找到对应时间点的data_blocks.items，提取其file_uuid字段
+
+  expected_output: >
+    返回JSON数组格式的详细事件数据：
+    **重要：所有输出必须使用简体中文，不能包含Unicode编码符号。**
+
+    [
+      {{
+        "id": "j1",
+        "text": "不超过100字；**关键词加粗**；异常值用<span style=\"color:#d0021b\">值</span>标红",
+        "chief_surgeon": "如果是手术事件，且有主刀医生信息，才需要提取主刀医生的名字，否则为空",
+        "examination_hospital": "如果是胃肠镜等大型检查事件，且有检查所在医院信息，才需要提取医院名称，否则为空",
+        "sources": [{{"file_uuid": "来源文件UUID"}}]
+      }}
+    ]
+
+  agent: patient_journey_details_generator
 
 extract_indicator_series_task:
   description: >

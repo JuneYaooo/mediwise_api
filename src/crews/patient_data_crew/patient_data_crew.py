@@ -218,6 +218,22 @@ class PatientDataCrew():
         )
 
     @agent
+    def patient_journey_summary_generator(self) -> Agent:
+        return Agent(
+            config=self.agents_config['patient_journey_summary_generator'],
+            llm=document_generation_llm,
+            verbose=True
+        )
+
+    @agent
+    def patient_journey_details_generator(self) -> Agent:
+        return Agent(
+            config=self.agents_config['patient_journey_details_generator'],
+            llm=document_generation_llm,
+            verbose=True
+        )
+
+    @agent
     def indicator_series_extractor(self) -> Agent:
         return Agent(
             config=self.agents_config['indicator_series_extractor'],
@@ -277,6 +293,20 @@ class PatientDataCrew():
     def extract_patient_journey_task(self) -> Task:
         return Task(
             config=self.tasks_config['extract_patient_journey_task'],
+            context=[self.get_disease_config_task()]  # 依赖疾病配置任务的输出
+        )
+
+    @task
+    def generate_patient_journey_summary_task(self) -> Task:
+        return Task(
+            config=self.tasks_config['generate_patient_journey_summary_task'],
+            context=[self.get_disease_config_task()]  # 依赖疾病配置任务的输出
+        )
+
+    @task
+    def generate_patient_journey_details_task(self) -> Task:
+        return Task(
+            config=self.tasks_config['generate_patient_journey_details_task'],
             context=[self.get_disease_config_task()]  # 依赖疾病配置任务的输出
         )
 
@@ -937,10 +967,10 @@ class PatientDataCrew():
             # 发送时间轴生成完成进度
             yield {"type": "progress", "stage": "timeline_generation_completed", "message": "患者时间轴生成完成", "progress": 65}
 
-            # ========== 阶段4: 患者旅程提取 ==========
+            # ========== 阶段4: 患者旅程提取（分层处理） ==========
             patient_journey_start_time = time.time()
             logger.info("-" * 80)
-            logger.info("【阶段4】开始患者旅程提取")
+            logger.info("【阶段4】开始患者旅程提取（分层处理）")
             logger.info("-" * 80)
 
             # 发送进度更新
@@ -972,46 +1002,228 @@ class PatientDataCrew():
                     existing_timeline_journey = compressed_journey
                     logger.warning("现有患者旅程数据是列表格式，将其视为 timeline_journey")
 
-            # 执行"患者时间旅程"任务（只提取时间轴）
-            timeline_journey_result = None
+            # ========== 阶段4.1: 生成患者旅程摘要 ==========
+            logger.info("-" * 80)
+            logger.info("【阶段4.1】开始生成患者旅程摘要")
+            logger.info("-" * 80)
+
+            # 提取现有患者旅程的摘要（只保留id、date、type、event_description）
+            existing_journey_summary = []
+            if existing_timeline_journey and len(existing_timeline_journey) > 0:
+                for event in existing_timeline_journey:
+                    # 从现有事件的text中提取简要描述作为event_description
+                    # 如果text太长，截取前30字作为事件描述
+                    event_text = event.get("text", "")
+                    event_description = event_text[:30] if event_text else ""
+
+                    summary_event = {
+                        "id": event.get("id"),
+                        "date": event.get("date"),
+                        "type": event.get("type"),
+                        "event_description": event_description
+                    }
+                    existing_journey_summary.append(summary_event)
+                logger.info(f"从现有患者旅程中提取了 {len(existing_journey_summary)} 个摘要事件")
+            else:
+                logger.info("没有现有患者旅程数据，将创建新的患者旅程")
+
+            # 执行患者旅程摘要生成任务
+            journey_summary_result = None
             try:
-                journey_inputs = {
+                summary_inputs = {
                     "current_date": current_date,
-                    "patient_content": compressed_patient_info,  # 🆕 使用压缩后的数据
+                    "patient_content": compressed_patient_info,
                     "full_structure_data": parsed_result if parsed_result else {},
-                    "existing_timeline_journey": existing_timeline_journey,  # 🆕 只传入时间轴数据
-                    "disease_config": disease_config_data  # 传递疾病配置
+                    "existing_journey_summary": existing_journey_summary,
+                    "disease_config": disease_config_data
                 }
-                self.extract_patient_journey_task().interpolate_inputs_and_add_conversation_history(journey_inputs)
-                journey_result = self.patient_journey_extractor().execute_task(self.extract_patient_journey_task())
-                timeline_journey_result = JsonUtils.safe_parse_json(journey_result, debug_prefix="Patient journey extraction")
 
-                # 额外的Unicode清理步骤和结构验证
-                if timeline_journey_result:
-                    timeline_journey_result = JsonUtils._decode_unicode_in_dict(timeline_journey_result)
+                # 🚨 重要：为每个任务创建新的 Task 实例
+                journey_summary_task = Task(
+                    config=self.tasks_config['generate_patient_journey_summary_task'],
+                    context=[self.get_disease_config_task()]
+                )
+
+                journey_summary_task.interpolate_inputs_and_add_conversation_history(summary_inputs)
+                journey_summary_result_raw = self.patient_journey_summary_generator().execute_task(journey_summary_task)
+
+                # 解析患者旅程摘要结果
+                journey_summary_result = JsonUtils.safe_parse_json(journey_summary_result_raw, debug_prefix="Patient journey summary generation")
+                if journey_summary_result:
+                    journey_summary_result = JsonUtils._decode_unicode_in_dict(journey_summary_result)
                     # 验证结果是否为列表
-                    if isinstance(timeline_journey_result, list):
-                        logger.info(f"成功提取患者时间旅程，包含{len(timeline_journey_result)}个时间节点")
-                    elif isinstance(timeline_journey_result, dict):
-                        # 如果返回的是字典，尝试提取 timeline_journey 字段
-                        if "timeline_journey" in timeline_journey_result:
-                            timeline_journey_result = timeline_journey_result["timeline_journey"]
-                            logger.info(f"从字典中提取患者时间旅程，包含{len(timeline_journey_result)}个时间节点")
-                        else:
-                            logger.warning("患者时间旅程解析结果是字典但缺少 timeline_journey 字段")
-                            timeline_journey_result = []
+                    if isinstance(journey_summary_result, list):
+                        logger.info(f"成功生成患者旅程摘要，包含 {len(journey_summary_result)} 个事件")
                     else:
-                        logger.warning("患者时间旅程解析结果格式不正确")
-                        timeline_journey_result = []
+                        logger.warning("患者旅程摘要解析结果格式不正确，应为列表")
+                        journey_summary_result = []
                 else:
-                    logger.warning("患者时间旅程解析结果为空")
-                    timeline_journey_result = []
+                    logger.warning("患者旅程摘要解析结果为空")
+                    journey_summary_result = []
             except Exception as e:
-                logger.error(f"Error in patient journey extraction: {e}")
-                timeline_journey_result = []
+                logger.error(f"Error in patient journey summary generation: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                journey_summary_result = []
 
-            # 发送患者旅程提取完成进度
-            yield {"type": "progress", "stage": "patient_journey_completed", "message": "患者旅程数据提取完成", "progress": 75}
+            # 发送摘要生成完成进度
+            yield {"type": "progress", "stage": "journey_summary_completed", "message": "患者旅程摘要生成完成", "progress": 72}
+
+            # ========== 阶段4.2: 并发生成详细文本 ==========
+            logger.info("-" * 80)
+            logger.info("【阶段4.2】开始并发生成患者旅程详细文本")
+            logger.info("-" * 80)
+
+            # 识别需要生成详细文本的事件（新增的事件）
+            events_need_details = []
+            existing_journey_ids = [e.get("id") for e in existing_journey_summary]
+
+            for event in journey_summary_result:
+                event_id = event.get("id")
+                # 只为新增的事件生成详细文本（不在existing_journey_summary中的事件）
+                if event_id not in existing_journey_ids:
+                    events_need_details.append(event)
+                    logger.debug(f"事件 {event_id} 是新增事件，需要生成详细文本")
+                else:
+                    logger.debug(f"事件 {event_id} 已存在，跳过详细文本生成")
+
+            logger.info(f"共有 {len(journey_summary_result)} 个患者旅程事件，其中 {len(events_need_details)} 个需要生成详细文本")
+
+            # 分批并发处理详细文本生成
+            batch_size = 8  # 每批处理8个事件（根据用户建议）
+            all_details = {}  # 存储所有详细文本，key为event_id
+
+            if events_need_details:
+                # 定义批量生成详细文本的函数
+                def generate_details_for_batch(event_ids):
+                    try:
+                        logger.info(f"开始生成批次事件的详细文本，事件ID: {event_ids}")
+
+                        # 🚨 重要：为每个线程创建新的 Task 实例，避免线程安全问题
+                        detail_task = Task(
+                            config=self.tasks_config['generate_patient_journey_details_task'],
+                            context=[self.get_disease_config_task()]
+                        )
+
+                        detail_inputs = {
+                            "current_date": current_date,
+                            "patient_content": compressed_patient_info,
+                            "full_structure_data": parsed_result if parsed_result else {},
+                            "journey_summary": journey_summary_result,
+                            "target_event_ids": event_ids,
+                            "disease_config": disease_config_data
+                        }
+                        detail_task.interpolate_inputs_and_add_conversation_history(detail_inputs)
+                        detail_result = self.patient_journey_details_generator().execute_task(detail_task)
+
+                        # 解析详细文本
+                        detail_data = JsonUtils.safe_parse_json(detail_result, debug_prefix=f"Patient journey details for {event_ids}")
+                        if detail_data:
+                            detail_data = JsonUtils._decode_unicode_in_dict(detail_data)
+                            # 验证结果是否为列表
+                            if isinstance(detail_data, list):
+                                logger.info(f"成功生成批次事件的详细信息，包含 {len(detail_data)} 个事件")
+                                # 返回字典，key为event_id，value为详细信息对象
+                                result = {}
+                                for item in detail_data:
+                                    event_id = item.get("id")
+                                    result[event_id] = {
+                                        "text": item.get("text", ""),
+                                        "chief_surgeon": item.get("chief_surgeon", ""),
+                                        "examination_hospital": item.get("examination_hospital", ""),
+                                        "sources": item.get("sources", [])
+                                    }
+                                return result
+                            else:
+                                logger.warning(f"批次事件的详细信息解析结果格式不正确")
+                                return {}
+                        else:
+                            logger.warning(f"批次事件的详细信息生成失败")
+                            return {}
+                    except Exception as e:
+                        logger.error(f"生成批次事件 {event_ids} 的详细信息时出错: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+                        return {}
+
+                # 获取最大并发数
+                max_concurrent = min(self.max_concurrency, (len(events_need_details) + batch_size - 1) // batch_size)
+                logger.info(f"使用 {max_concurrent} 个并发worker处理 {len(events_need_details)} 个事件")
+
+                # 分批处理
+                completed_count = 0
+                total_batches = (len(events_need_details) + batch_size - 1) // batch_size
+
+                for batch_start in range(0, len(events_need_details), batch_size):
+                    batch_events = events_need_details[batch_start:batch_start + batch_size]
+                    batch_num = batch_start // batch_size + 1
+                    batch_event_ids = [e.get("id") for e in batch_events]
+
+                    logger.info(f"处理第 {batch_num}/{total_batches} 批，包含 {len(batch_events)} 个事件")
+
+                    # 使用线程池并发处理当前批次
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_concurrent, 1)) as executor:
+                        future = executor.submit(generate_details_for_batch, batch_event_ids)
+
+                        try:
+                            batch_details = future.result()
+                            all_details.update(batch_details)
+                            completed_count += len(batch_events)
+                            logger.info(f"完成 {completed_count}/{len(events_need_details)} 个事件的详细文本生成")
+
+                            # 发送详细文本生成进度（72-78%之间）
+                            detail_progress = 72 + int(6 * completed_count / len(events_need_details))
+                            yield {"type": "progress", "stage": "journey_details_generation",
+                                   "message": f"正在生成详细文本 {completed_count}/{len(events_need_details)}",
+                                   "progress": detail_progress}
+                        except Exception as e:
+                            logger.error(f"处理批次 {batch_num} 的详细文本时出错: {e}")
+
+            # ========== 阶段4.3: 合并摘要和详细信息 ==========
+            logger.info("-" * 80)
+            logger.info("【阶段4.3】开始合并摘要和详细信息")
+            logger.info("-" * 80)
+
+            # 合并摘要和详细信息
+            final_timeline_journey = []
+            for event in journey_summary_result:
+                event_id = event.get("id")
+                # 创建完整的患者旅程事件
+                full_event = {
+                    "date": event.get("date"),
+                    "type": event.get("type")
+                }
+
+                # 添加详细信息
+                if event_id in all_details:
+                    # 新生成的详细信息
+                    detail_info = all_details[event_id]
+                    full_event["text"] = detail_info.get("text", "")
+                    full_event["chief_surgeon"] = detail_info.get("chief_surgeon", "")
+                    full_event["examination_hospital"] = detail_info.get("examination_hospital", "")
+                    full_event["sources"] = detail_info.get("sources", [])
+                elif existing_timeline_journey and event_id in [e.get("id") for e in existing_timeline_journey]:
+                    # 如果是现有事件，从existing_timeline_journey中获取详细信息
+                    for existing_event in existing_timeline_journey:
+                        if existing_event.get("id") == event_id:
+                            full_event["text"] = existing_event.get("text", "")
+                            full_event["chief_surgeon"] = existing_event.get("chief_surgeon", "")
+                            full_event["examination_hospital"] = existing_event.get("examination_hospital", "")
+                            full_event["sources"] = existing_event.get("sources", [])
+                            break
+                else:
+                    # 没有详细信息，使用空值
+                    full_event["text"] = ""
+                    full_event["chief_surgeon"] = ""
+                    full_event["examination_hospital"] = ""
+                    full_event["sources"] = []
+
+                final_timeline_journey.append(full_event)
+
+            logger.info(f"成功合并患者旅程数据，最终包含 {len(final_timeline_journey)} 个完整事件")
+
+            # 执行"患者时间旅程"任务（只提取时间轴）
+            timeline_journey_result = final_timeline_journey
 
             # ========== 阶段4.5: 指标序列提取 ==========
             logger.info("-" * 80)

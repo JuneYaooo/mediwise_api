@@ -884,12 +884,44 @@ class PatientInfoUpdateCrew():
             return None
 
     @agent
+    def modification_summary_analyzer(self) -> Agent:
+        """修改摘要分析专家：识别所有需要修改的位置"""
+        return Agent(
+            config=self.agents_config['modification_summary_analyzer'],
+            llm=general_llm,
+            verbose=True
+        )
+
+    @agent
+    def modification_details_generator(self) -> Agent:
+        """修改明细生成专家：生成详细的修改指令"""
+        return Agent(
+            config=self.agents_config['modification_details_generator'],
+            llm=general_llm,
+            verbose=True
+        )
+
+    @agent
     def update_analyzer(self) -> Agent:
         """更新分析专家：分析用户的更新需求并返回修改指令"""
         return Agent(
             config=self.agents_config['update_analyzer'],
             llm=general_llm,
             verbose=True
+        )
+
+    @task
+    def analyze_modification_summary_task(self) -> Task:
+        """分析修改摘要任务"""
+        return Task(
+            config=self.tasks_config['analyze_modification_summary_task']
+        )
+
+    @task
+    def generate_modification_details_task(self) -> Task:
+        """生成修改明细任务"""
+        return Task(
+            config=self.tasks_config['generate_modification_details_task']
         )
 
     @task
@@ -1035,91 +1067,132 @@ class PatientInfoUpdateCrew():
                     logger.info(f"✅ 数据量在安全范围内，无需压缩")
                     logger.info("=" * 100)
 
-            # 使用agent分析并生成修改指令（使用压缩后的数据）
-            inputs = {
+            # ========== 阶段1: 生成修改摘要 ==========
+            logger.info("=" * 80)
+            logger.info("【阶段1】开始生成修改摘要")
+            logger.info("=" * 80)
+
+            summary_inputs = {
                 "user_request": user_request,
-                "current_patient_data": compressed_patient_data  # 🆕 使用压缩后的数据
+                "current_patient_data": compressed_patient_data
             }
-            
-            self.analyze_and_modify_task().interpolate_inputs_and_add_conversation_history(inputs)
-            result = self.update_analyzer().execute_task(self.analyze_and_modify_task())
-            
-            # 记录原始结果用于调试
-            logger.info(f"Agent 原始返回结果类型: {type(result)}")
-            logger.info(f"Agent 原始返回结果: {str(result)[:500]}...")  # 只显示前500个字符
-            
-            # 解析修改指令
-            parsed_instructions = JsonUtils.safe_parse_json(result, debug_prefix="Modification instructions")
-            
-            # 记录解析结果用于调试
-            logger.info(f"解析后的指令类型: {type(parsed_instructions)}")
-            logger.info(f"解析后的指令内容: {parsed_instructions}")
-            
-            # 检查解析结果是否为空或无效
-            if not parsed_instructions:
-                logger.error("Agent返回的结果无法解析为有效的JSON格式")
-                logger.error(f"原始结果: {str(result)}")
+
+            # 创建新的Task实例
+            summary_task = Task(
+                config=self.tasks_config['analyze_modification_summary_task']
+            )
+            summary_task.interpolate_inputs_and_add_conversation_history(summary_inputs)
+            summary_result = self.modification_summary_analyzer().execute_task(summary_task)
+
+            # 解析修改摘要
+            modification_summary = JsonUtils.safe_parse_json(summary_result, debug_prefix="Modification summary")
+            if not modification_summary or not isinstance(modification_summary, list):
+                logger.error("修改摘要解析失败或格式不正确")
                 return {
-                    "error": f"Agent返回的结果无法解析为有效的JSON格式。原始结果: {str(result)[:200]}..."
+                    "error": f"修改摘要解析失败。原始结果: {str(summary_result)[:200]}..."
                 }
-            
-            if parsed_instructions and isinstance(parsed_instructions, dict):
-                modifications = parsed_instructions.get("modifications", [])
-                operation_type = parsed_instructions.get("operation_type", "single")
-                total_modifications = parsed_instructions.get("total_modifications", len(modifications))
-                consistency_updates = parsed_instructions.get("consistency_updates", [])
-                reasoning = parsed_instructions.get("reasoning", "")
-                
-                logger.info(f"收到修改指令 - 操作类型: {operation_type}, 总修改数: {total_modifications}")
-                logger.info(f"分析推理: {reasoning}")
-                
-                # 记录一致性更新信息
-                if consistency_updates:
-                    for update in consistency_updates:
-                        logger.info(f"一致性更新: {update.get('description', '')}")
-                        logger.info(f"涉及模块: {update.get('affected_modules', [])}")
-                
-                # 使用代码执行修改指令
-                logger.info(f"开始执行修改操作，修改指令数量: {len(modifications)}")
-                updated_data = self._execute_modifications(current_patient_data, modifications)
-                logger.info(f"修改操作完成")
-                
-                # 准备返回的结果，格式与patient_data_crew保持一致
-                # 直接使用原有的patient_content，不做修改
-                original_patient_content = current_patient_data.get("patient_content", "")
-                
-                result_data = {
-                    "patient_content": original_patient_content,
-                    "full_structure_data": updated_data.get("patient_timeline", {}),
-                    "patient_journey": updated_data.get("patient_journey", {}),
-                    "mdt_simple_report": updated_data.get("mdt_simple_report", {})
-                }
-                
-                # 保存患者数据到输出目录（与intent_determine_crew相同的session目录）
-                if session_id:
-                    output_file_path = self._save_patient_data_to_output(
-                        session_id,
-                        result_data["patient_content"],
-                        result_data["full_structure_data"],
-                        result_data.get("patient_journey"),
-                        result_data.get("mdt_simple_report")
+
+            logger.info(f"成功生成修改摘要，包含 {len(modification_summary)} 个修改操作")
+            for item in modification_summary:
+                logger.info(f"  - {item.get('id')}: {item.get('target_location')} - {item.get('brief_description')}")
+
+            # ========== 阶段2: 分批生成修改明细 ==========
+            logger.info("=" * 80)
+            logger.info("【阶段2】开始分批生成修改明细")
+            logger.info("=" * 80)
+
+            batch_size = 2  # 每批处理2个修改操作
+            all_modifications = []
+
+            # 分批处理
+            for batch_start in range(0, len(modification_summary), batch_size):
+                batch_items = modification_summary[batch_start:batch_start + batch_size]
+                batch_num = batch_start // batch_size + 1
+                total_batches = (len(modification_summary) + batch_size - 1) // batch_size
+                batch_ids = [item.get('id') for item in batch_items]
+
+                logger.info(f"处理第 {batch_num}/{total_batches} 批，包含 {len(batch_items)} 个修改操作")
+                logger.info(f"  修改ID: {batch_ids}")
+
+                try:
+                    # 创建新的Task实例
+                    details_task = Task(
+                        config=self.tasks_config['generate_modification_details_task']
                     )
-                    if output_file_path:
-                        logger.info(f"患者数据已保存到输出目录: {output_file_path}")
+
+                    details_inputs = {
+                        "current_patient_data": compressed_patient_data,
+                        "modification_summary": modification_summary,
+                        "target_modification_ids": batch_ids
+                    }
+
+                    details_task.interpolate_inputs_and_add_conversation_history(details_inputs)
+                    details_result = self.modification_details_generator().execute_task(details_task)
+
+                    # 解析修改明细
+                    batch_modifications = JsonUtils.safe_parse_json(details_result, debug_prefix=f"Modification details batch {batch_num}")
+                    if batch_modifications and isinstance(batch_modifications, list):
+                        all_modifications.extend(batch_modifications)
+                        logger.info(f"  成功生成 {len(batch_modifications)} 个修改指令")
                     else:
-                        logger.warning("保存患者数据到输出目录失败")
-                else:
-                    logger.warning("No agent_session_id provided, skipping patient data save")
-                
-                return result_data
-                
-            else:
-                logger.warning("Failed to parse modification instructions")
+                        logger.warning(f"  批次 {batch_num} 的修改明细解析失败")
+                except Exception as e:
+                    logger.error(f"处理批次 {batch_num} 时出错: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+
+            logger.info(f"所有修改明细生成完成，共 {len(all_modifications)} 个修改指令")
+
+            # ========== 阶段3: 执行修改操作 ==========
+            logger.info("=" * 80)
+            logger.info("【阶段3】开始执行修改操作")
+            logger.info("=" * 80)
+
+            if not all_modifications:
+                logger.warning("没有生成任何修改指令")
                 return {
-                    "error": "Failed to parse modification instructions",
-                    "raw": result
+                    "error": "没有生成任何修改指令"
                 }
-            
+
+            # 为修改指令添加sequence字段（如果没有的话）
+            for idx, mod in enumerate(all_modifications):
+                if 'sequence' not in mod:
+                    mod['sequence'] = idx + 1
+
+            # 使用代码执行修改指令
+            logger.info(f"开始执行修改操作，修改指令数量: {len(all_modifications)}")
+            updated_data = self._execute_modifications(current_patient_data, all_modifications)
+            logger.info(f"修改操作完成")
+
+            # 准备返回的结果，格式与patient_data_crew保持一致
+            # 直接使用原有的patient_content，不做修改
+            original_patient_content = current_patient_data.get("patient_content", "")
+
+            result_data = {
+                "patient_content": original_patient_content,
+                "full_structure_data": updated_data.get("patient_timeline", {}),
+                "patient_journey": updated_data.get("patient_journey", {}),
+                "mdt_simple_report": updated_data.get("mdt_simple_report", {})
+            }
+
+            # 保存患者数据到输出目录（与intent_determine_crew相同的session目录）
+            if session_id:
+                output_file_path = self._save_patient_data_to_output(
+                    session_id,
+                    result_data["patient_content"],
+                    result_data["full_structure_data"],
+                    result_data.get("patient_journey"),
+                    result_data.get("mdt_simple_report")
+                )
+                if output_file_path:
+                    logger.info(f"患者数据已保存到输出目录: {output_file_path}")
+                else:
+                    logger.warning("保存患者数据到输出目录失败")
+            else:
+                logger.warning("No agent_session_id provided, skipping patient data save")
+
+            return result_data
+
         except Exception as e:
             logger.error(f"Error updating patient info: {e}")
             logger.error(f"错误类型: {type(e)}")
