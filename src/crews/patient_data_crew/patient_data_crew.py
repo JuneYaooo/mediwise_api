@@ -22,7 +22,6 @@ from app.utils.qiniu_upload_service import QiniuUploadService
 from app.utils.file_metadata_builder import FileMetadataBuilder  # 新增导入
 from src.utils.data_compressor import PatientDataCompressor  # 数据压缩
 from src.utils.token_manager import TokenManager  # Token管理
-from src.utils.universal_chunked_generator import UniversalChunkedGenerator  # 分块生成
 
 # 初始化 logger
 logger = BeijingLogger().get_logger()
@@ -393,37 +392,23 @@ class PatientDataCrew():
             # 设置当前日期
             current_date = datetime.now().strftime("%Y-%m-%d")
 
-            # 🆕 初始化数据压缩和分块生成工具（可选功能）
-            # 优先使用主开关 ENABLE_NEW_FEATURES，如果未设置则使用 ENABLE_DATA_COMPRESSION
-            enable_new_features = os.getenv('ENABLE_NEW_FEATURES', '').lower()
+            # 🆕 初始化数据压缩工具（可选功能）
+            enable_compression = os.getenv('ENABLE_DATA_COMPRESSION', 'false').lower() in ('true', '1', 'yes')
 
-            if enable_new_features in ('true', '1', 'yes'):
-                # 主开关启用 - 启用所有新功能
-                enable_compression = True
-                logger.info("✅ 主开关已启用 (ENABLE_NEW_FEATURES=true)，将使用所有新功能")
-            elif enable_new_features in ('false', '0', 'no'):
-                # 主开关禁用 - 使用原有逻辑
-                enable_compression = False
-                logger.info("ℹ️ 主开关已禁用 (ENABLE_NEW_FEATURES=false)，使用原有逻辑")
+            if enable_compression:
+                logger.info("✅ 数据压缩功能已启用 (ENABLE_DATA_COMPRESSION=true)")
             else:
-                # 未设置主开关 - 使用细粒度控制
-                enable_compression = os.getenv('ENABLE_DATA_COMPRESSION', 'false').lower() in ('true', '1', 'yes')
-                if enable_compression:
-                    logger.info("✅ 数据压缩功能已启用 (ENABLE_DATA_COMPRESSION=true)")
-                else:
-                    logger.info("ℹ️ 数据压缩功能未启用（使用原有逻辑），可通过 ENABLE_NEW_FEATURES=true 或 ENABLE_DATA_COMPRESSION=true 启用")
+                logger.info("ℹ️ 数据压缩功能未启用，可通过 ENABLE_DATA_COMPRESSION=true 启用")
 
             token_manager = None
             data_compressor = None
-            chunked_generator = None
 
             if enable_compression:
                 token_manager = TokenManager(logger=logger)
                 data_compressor = PatientDataCompressor(logger=logger, token_manager=token_manager)
-                chunked_generator = UniversalChunkedGenerator(logger=logger, token_manager=token_manager)
-                logger.info("✅ 已初始化数据压缩和分块生成工具（新功能已启用）")
+                logger.info("✅ 已初始化数据压缩工具")
             else:
-                logger.info("ℹ️ 数据压缩功能未启用（使用原有逻辑），可通过 ENABLE_DATA_COMPRESSION=true 启用")
+                logger.info("ℹ️ 数据压缩工具未初始化")
 
             # 🚨 修改：使用传入的existing_patient_data参数而不是从本地文件加载
             existing_timeline = None

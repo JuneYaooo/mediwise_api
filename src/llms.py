@@ -21,7 +21,7 @@ document_generation_llm = LLM(
 		model=os.getenv('DOCUMENT_GENERATION_MODEL_NAME'),
 		api_key=os.getenv('DOCUMENT_GENERATION_API_KEY'),
 		base_url=os.getenv('DOCUMENT_GENERATION_BASE_URL'),
-		max_tokens=65535,
-		temperature=0.1,
-        timeout=300
+		max_tokens=int(os.getenv('DOCUMENT_GENERATION_MAX_TOKENS', '8192')),
+		temperature=float(os.getenv('DOCUMENT_GENERATION_TEMPERATURE', '0.1')),
+        timeout=int(os.getenv('DOCUMENT_GENERATION_TIMEOUT', '300'))
 	)
