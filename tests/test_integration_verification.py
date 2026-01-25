@@ -98,7 +98,7 @@ def test_data_compressor_functionality():
         }
 
         # 尝试压缩
-        compressed = compressor.compress_data(test_data, max_tokens=500, model_name='deepseek-chat')
+        compressed = compressor.compress_data(test_data, target_tokens=500)
 
         print("✅ 数据压缩器功能正常")
         print(f"  ├─ 原始数据大小: {len(str(test_data))} 字符")

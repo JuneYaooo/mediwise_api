@@ -839,9 +839,10 @@ class PatientDataCrew():
             if entries_need_details:
                 # 定义单个条目的详细数据生成函数
                 def generate_details_for_entry(entry):
+                    timeline_id = entry.get("id")
                     try:
-                        timeline_id = entry.get("id")
                         logger.info(f"开始生成条目 {timeline_id} 的详细数据")
+                        logger.info(f"  条目信息: time_period={entry.get('time_period')}, title={entry.get('title')}, type={entry.get('type')}")
 
                         # 🚨 重要：为每个线程创建新的 Task 实例，避免线程安全问题
                         detail_task = Task(
@@ -856,23 +857,65 @@ class PatientDataCrew():
                             "target_timeline_id": timeline_id,
                             "disease_config": disease_config_data
                         }
+
+                        # 🆕 记录输入数据的大小，帮助诊断问题
+                        patient_info_size = len(str(compressed_patient_info))
+                        timeline_summary_size = len(str(timeline_summary_data))
+                        logger.debug(f"  条目 {timeline_id} 的输入参数: target_timeline_id={timeline_id}, timeline_summary包含{len(timeline_summary_data.get('timeline', []))}个条目")
+                        logger.debug(f"  patient_info大小: {patient_info_size}字符, timeline_summary大小: {timeline_summary_size}字符")
+
+                        # 🆕 如果启用了数据压缩，记录压缩比例
+                        if enable_compression and data_compressor:
+                            original_size = len(str(preprocessed_info))
+                            compression_ratio = patient_info_size / original_size if original_size > 0 else 1.0
+                            logger.debug(f"  数据压缩比例: {compression_ratio:.1%} (原始: {original_size}字符 → 压缩后: {patient_info_size}字符)")
+                            if compression_ratio < 0.3:
+                                logger.warning(f"  ⚠️ 数据压缩比例过高（{compression_ratio:.1%}），可能导致详细信息丢失")
+
                         detail_task.interpolate_inputs_and_add_conversation_history(detail_inputs)
                         detail_result = self.timeline_details_generator().execute_task(detail_task)
+
+                        # 🆕 记录LLM原始返回结果（截取前500字符）
+                        logger.info(f"  条目 {timeline_id} LLM原始返回结果（前500字符）: {str(detail_result)[:500]}")
 
                         # 解析详细数据
                         detail_data = JsonUtils.safe_parse_json(detail_result, debug_prefix=f"Timeline details for {timeline_id}")
                         if detail_data:
                             detail_data = JsonUtils._decode_unicode_in_dict(detail_data)
-                            logger.info(f"成功生成条目 {timeline_id} 的详细数据，包含 {len(detail_data.get('data_blocks', []))} 个数据块")
-                            return (timeline_id, detail_data.get("data_blocks", []))
+                            data_blocks = detail_data.get("data_blocks", [])
+                            logger.info(f"✅ 成功生成条目 {timeline_id} 的详细数据，包含 {len(data_blocks)} 个数据块")
+
+                            # 🆕 如果数据块为0，记录警告和详细信息
+                            if len(data_blocks) == 0:
+                                logger.warning(f"⚠️ 条目 {timeline_id} 的详细数据包含0个数据块")
+                                logger.warning(f"  解析后的detail_data结构: {json.dumps(detail_data, ensure_ascii=False, indent=2)[:1000]}")
+                                logger.warning(f"  LLM完整返回结果: {str(detail_result)[:2000]}")
+                            else:
+                                # 记录每个数据块的类型和项目数
+                                for idx, block in enumerate(data_blocks):
+                                    block_type = block.get("block_type", "未知")
+                                    block_title = block.get("block_title", "未命名")
+                                    items_count = len(block.get("items", []))
+                                    logger.info(f"    数据块{idx+1}: {block_type} - {block_title} ({items_count}个项目)")
+
+                            return (timeline_id, data_blocks)
                         else:
-                            logger.warning(f"条目 {timeline_id} 的详细数据生成失败")
+                            logger.warning(f"❌ 条目 {timeline_id} 的详细数据解析失败（JsonUtils.safe_parse_json返回None）")
+                            logger.warning(f"  LLM完整返回结果: {str(detail_result)[:2000]}")
                             return (timeline_id, [])
                     except Exception as e:
-                        logger.error(f"生成条目 {entry.get('id')} 的详细数据时出错: {e}")
+                        logger.error(f"❌ 生成条目 {timeline_id} 的详细数据时出错: {e}")
                         import traceback
-                        logger.error(traceback.format_exc())
-                        return (entry.get("id"), [])
+                        error_traceback = traceback.format_exc()
+                        logger.error(f"  完整错误堆栈:\n{error_traceback}")
+
+                        # 🆕 尝试记录更多上下文信息
+                        try:
+                            logger.error(f"  条目信息: {json.dumps(entry, ensure_ascii=False, indent=2)}")
+                        except:
+                            logger.error(f"  条目信息（无法序列化）: {str(entry)}")
+
+                        return (timeline_id, [])
 
                 # 获取最大并发数
                 max_concurrent = min(self.max_concurrency, len(entries_need_details))
@@ -1101,17 +1144,22 @@ class PatientDataCrew():
                         detail_task.interpolate_inputs_and_add_conversation_history(detail_inputs)
                         detail_result = self.patient_journey_details_generator().execute_task(detail_task)
 
+                        # 🆕 记录LLM原始返回结果（截取前500字符）
+                        logger.info(f"  批次事件 {event_ids} LLM原始返回结果（前500字符）: {str(detail_result)[:500]}")
+
                         # 解析详细文本
                         detail_data = JsonUtils.safe_parse_json(detail_result, debug_prefix=f"Patient journey details for {event_ids}")
                         if detail_data:
                             detail_data = JsonUtils._decode_unicode_in_dict(detail_data)
                             # 验证结果是否为列表
                             if isinstance(detail_data, list):
-                                logger.info(f"成功生成批次事件的详细信息，包含 {len(detail_data)} 个事件")
+                                logger.info(f"✅ 成功生成批次事件的详细信息，包含 {len(detail_data)} 个事件")
                                 # 返回字典，key为event_id，value为详细信息对象
                                 result = {}
                                 for item in detail_data:
                                     event_id = item.get("id")
+                                    text_length = len(item.get("text", ""))
+                                    logger.info(f"    事件 {event_id}: text长度={text_length}字符")
                                     result[event_id] = {
                                         "text": item.get("text", ""),
                                         "chief_surgeon": item.get("chief_surgeon", ""),
@@ -1120,15 +1168,18 @@ class PatientDataCrew():
                                     }
                                 return result
                             else:
-                                logger.warning(f"批次事件的详细信息解析结果格式不正确")
+                                logger.warning(f"⚠️ 批次事件的详细信息解析结果格式不正确，应为列表但得到: {type(detail_data)}")
+                                logger.warning(f"  解析后的数据: {json.dumps(detail_data, ensure_ascii=False, indent=2)[:1000]}")
                                 return {}
                         else:
-                            logger.warning(f"批次事件的详细信息生成失败")
+                            logger.warning(f"❌ 批次事件的详细信息生成失败（JsonUtils.safe_parse_json返回None）")
+                            logger.warning(f"  LLM完整返回结果: {str(detail_result)[:2000]}")
                             return {}
                     except Exception as e:
-                        logger.error(f"生成批次事件 {event_ids} 的详细信息时出错: {e}")
+                        logger.error(f"❌ 生成批次事件 {event_ids} 的详细信息时出错: {e}")
                         import traceback
-                        logger.error(traceback.format_exc())
+                        error_traceback = traceback.format_exc()
+                        logger.error(f"  完整错误堆栈:\n{error_traceback}")
                         return {}
 
                 # 获取最大并发数
