@@ -196,45 +196,51 @@ class JsonUtils:
     def extract_json_from_text(text: str) -> Optional[str]:
         """
         从文本中提取JSON字符串
-        
+
         Args:
             text: 可能包含JSON的文本
-            
+
         Returns:
             提取的JSON字符串，如果未找到则返回None
         """
         # 检查输入是否为空
         if not text or not isinstance(text, str):
             return None
-            
+
         # 先尝试整个文本是否是有效的JSON
         try:
             json.loads(text)
             return text
         except:
             pass
-            
-        # 尝试找到最长且最有可能是JSON的部分
-        
-        # 尝试检测并处理常见的LLM输出格式如：```json ... ```
-        json_code_blocks = re.findall(r'```(?:json)?\s*([\s\S]*?)```', text)
+
+        # 🆕 优先处理 markdown 代码块（LLM常见输出格式）
+        # 匹配 ```json ... ``` 或 ``` ... ```
+        json_code_blocks = re.findall(r'```(?:json)?\s*([\s\S]*?)```', text, re.DOTALL)
         for block in json_code_blocks:
+            block = block.strip()
+            if not block:
+                continue
             try:
-                json.loads(block.strip())
-                return block.strip()
+                json.loads(block)
+                return block
             except:
                 # 尝试修复并验证
-                fixed = JsonUtils.fix_json_format(block.strip())
+                fixed = JsonUtils.fix_json_format(block)
                 if fixed:
-                    return fixed
-        
+                    try:
+                        json.loads(fixed)
+                        return fixed
+                    except:
+                        pass
+
         # 尝试查找 { 和匹配的 } 之间的内容（处理嵌套）
         # 从最长的可能JSON开始尝试
         json_candidates = []
-        
+
         # 找到所有的 { 位置
         open_positions = [pos for pos, char in enumerate(text) if char == '{']
-        
+
         for start_pos in open_positions:
             # 从此位置开始找匹配的右括号
             depth = 0
@@ -246,10 +252,10 @@ class JsonUtils:
                     if depth == 0:  # 找到匹配的右括号
                         json_candidates.append(text[start_pos:i+1])
                         break
-        
+
         # 类似地处理数组
         open_positions = [pos for pos, char in enumerate(text) if char == '[']
-        
+
         for start_pos in open_positions:
             # 从此位置开始找匹配的右括号
             depth = 0
@@ -261,10 +267,10 @@ class JsonUtils:
                     if depth == 0:  # 找到匹配的右括号
                         json_candidates.append(text[start_pos:i+1])
                         break
-                        
+
         # 按长度从大到小排序候选项（更长的JSON更有可能是完整的）
         json_candidates.sort(key=len, reverse=True)
-        
+
         # 尝试解析每个候选项
         for candidate in json_candidates:
             try:
@@ -274,8 +280,12 @@ class JsonUtils:
                 # 尝试修复并验证
                 fixed = JsonUtils.fix_json_format(candidate)
                 if fixed:
-                    return fixed
-        
+                    try:
+                        json.loads(fixed)
+                        return fixed
+                    except:
+                        pass
+
         # 回退到旧方法：使用简单正则表达式
         try:
             # 尝试查找 { 和 } 之间的内容
@@ -288,7 +298,11 @@ class JsonUtils:
                     # 尝试修复并验证
                     fixed = JsonUtils.fix_json_format(match)
                     if fixed:
-                        return fixed
+                        try:
+                            json.loads(fixed)
+                            return fixed
+                        except:
+                            pass
             
             # 尝试查找 [ 和 ] 之间的内容
             matches = re.findall(r'(\[.*?\])', text, re.DOTALL)

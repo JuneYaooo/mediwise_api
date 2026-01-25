@@ -378,13 +378,13 @@ generate_timeline_details_task:
           "items": [
             {{
               "name": "项目名称",
-              "value": "检验值或结果",
-              "reference": "参考范围（可选）",
-              "unit": "单位（可选）",
+              "value": "检验关键项目值的拼接或者结果或者病理或者影像的结论",
               "status": "normal/abnormal/critical/pending",
-              "time": "yyyy-MM-dd或yyyy-MM-dd HH:mm",
-              "file_uuid": "来源文件UUID（可选）",
-              "notes": "备注（可选）"
+              "time": "yyyy-MM-dd格式（若为具体时间点，如同一天内的不同时间，可以是yyyy-MM-dd HH:mm）",
+              "details": "详细描述（病理与影像需要保持原文，不要精简掉重要信息，不要总结）",
+              "file_uuid": "来源文件的UUID（如果基于某个源文件提取，否则为空）",
+              "reference": "参考范围（仅检验项目需要）",
+              "unit": "单位（仅检验项目需要）"
             }}
           ]
         }}
@@ -395,6 +395,9 @@ generate_timeline_details_task:
     - 如果patient_info中没有该时间点的详细数据，返回空的data_blocks数组：{{"timeline_id": "t1", "data_blocks": []}}
     - 不要返回null或省略data_blocks字段，必须返回完整的JSON结构
     - **data_blocks为空应该是罕见情况**，大多数时候应该能从patient_info中提取到详细数据
+    - 对于检验项目，value字段填写检验值，reference和unit字段必填
+    - 对于病理和影像，value字段填写结论，details字段填写完整的原文描述（不要精简）
+    - 对于其他类型，根据实际情况填写value和details字段
 
   agent: timeline_details_generator
 
