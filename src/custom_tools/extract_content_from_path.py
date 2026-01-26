@@ -307,7 +307,15 @@ class ExtractContentFromPathTool(BaseTool):
                 'file_extension': file_extension[1:],
                 'file_name': filename,
                 'extraction_success': False,  # 默认失败，成功后会更新
-                'extraction_error': None
+                'extraction_error': None,
+                # 医学影像相关字段 - 初始化为默认值
+                'has_medical_image': False,
+                'image_bbox': None,
+                'cropped_image_uuid': None,
+                'cropped_image_path': None,
+                'cropped_image_filename': None,
+                'cropped_image_available': False,
+                'cropped_temp_dir': None
             }
             
             # 过滤隐藏文件和系统文件
@@ -456,15 +464,17 @@ class ExtractContentFromPathTool(BaseTool):
    - 对于医学表格检验检查报告单,不需要一些医生姓名相关的信息
    - 结果返回解析后的医学报告的markdown格式内容
 
-3. image_bbox: 医学影像图片的边界框(仅当has_medical_image=true时填写)
+3. image_bbox: 医学影像图片的边界框（**必填字段**）
+   - ⚠️ 重要：当has_medical_image=true时，image_bbox字段是**必须的**，不能为null或省略
    - 用于从混合图片(文字+图像)中裁剪出医学影像部分
    - bbox坐标使用归一化值(0.0-1.0),其中:
      * x: 图像中心点的水平位置(0=最左,1=最右)
      * y: 图像中心点的垂直位置(0=最上,1=最下)
      * width: 图像宽度占整张图片宽度的比例
      * height: 图像高度占整张图片高度的比例
-   - 如果整张图片就是医学影像(没有文字报告部分),bbox可以是 {"x": 0.5, "y": 0.5, "width": 1.0, "height": 1.0}
+   - 如果整张图片就是医学影像(没有文字报告部分),**必须**返回 {"x": 0.5, "y": 0.5, "width": 1.0, "height": 1.0}
    - 如果图片是文字报告中嵌入的医学影像,返回影像部分的准确bbox
+   - 如果has_medical_image=false，可以省略此字段或返回null
 
 直接返回JSON,不要输出其他回复语气词"""},
                                         {
@@ -546,7 +556,11 @@ class ExtractContentFromPathTool(BaseTool):
                             result['extraction_success'] = True  # 标记提取成功
 
                             # 存储边界框用于裁剪
-                            if has_medical_image and image_bbox:
+                            if has_medical_image:
+                                # 如果模型没有返回边界框，使用默认值（整张图片）
+                                if not image_bbox:
+                                    image_bbox = {"x": 0.5, "y": 0.5, "width": 1.0, "height": 1.0}
+                                    logger.info(f"医学影像未返回边界框，使用默认值（整张图片）: {image_bbox}")
                                 result['image_bbox'] = image_bbox
                                 logger.info(f"医学影像边界框: {image_bbox}")
 
@@ -604,7 +618,13 @@ class ExtractContentFromPathTool(BaseTool):
 
                                 except Exception as crop_error:
                                     logger.error(f"裁剪医学影像失败: {str(crop_error)}")
+                                    # 裁剪失败时，设置所有相关字段为明确的失败状态
                                     result['cropped_image_available'] = False
+                                    result['cropped_image_uuid'] = None
+                                    result['cropped_image_path'] = None
+                                    result['cropped_image_filename'] = None
+                                    result['cropped_temp_dir'] = None
+                                    logger.warning(f"裁剪失败，但保留原图和边界框信息供后续使用")
                         else:
                             logger.warning(f"图片内容提取为空: {filename}")
                             result['file_content'] = f"图片文件: {filename} (API调用成功但返回内容为空)"

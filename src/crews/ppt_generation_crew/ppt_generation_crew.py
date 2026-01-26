@@ -68,20 +68,35 @@ def process_raw_files_data(raw_files_data, filter_no_cropped_image=True):
         image_url = file_item.get("cloud_storage_url")
         cropped_image_available = file_item.get("cropped_image_available")
         cropped_image_url = file_item.get("cropped_image_url")
+        cropped_image_uuid = file_item.get("cropped_image_uuid")
+        image_bbox = file_item.get("image_bbox")
         filename = file_item.get("filename", "未知文件")
 
         # 🚨 DEBUG: 输出每个文件的裁剪图信息
         logger.info(f"📄 处理文件: {filename}")
         logger.info(f"  ├─ has_medical_image: {file_item.get('has_medical_image', False)}")
         logger.info(f"  ├─ cropped_image_available: {cropped_image_available}")
+        logger.info(f"  ├─ cropped_image_uuid: {cropped_image_uuid}")
         logger.info(f"  ├─ cropped_image_url: {cropped_image_url[:80] if cropped_image_url else None}...")
+        logger.info(f"  ├─ image_bbox: {image_bbox}")
         logger.info(f"  └─ cloud_storage_url: {image_url[:80] if image_url else None}...")
 
-        # 如果启用过滤，则只保留cropped_image_available=True且cropped_image_url不为空的文件
+        # 如果启用过滤，则只保留有医学影像的文件
+        # 优先级：裁剪图 > 原图（如果has_medical_image=true）
         if filter_no_cropped_image:
-            if not cropped_image_available or not cropped_image_url:
+            # 必须满足：has_medical_image=true 且 (有裁剪图 或 有原图)
+            has_medical_image = file_item.get('has_medical_image', False)
+            has_cropped = cropped_image_available and cropped_image_url
+            has_original = image_url
+
+            if not has_medical_image:
                 filtered_count += 1
-                logger.info(f"  ⚠️ 过滤掉该文件（cropped_image_available={cropped_image_available}, cropped_image_url={'有' if cropped_image_url else '无'}）: {filename}")
+                logger.info(f"  ⚠️ 过滤掉该文件（has_medical_image=False）: {filename}")
+                continue
+
+            if not has_cropped and not has_original:
+                filtered_count += 1
+                logger.info(f"  ⚠️ 过滤掉该文件（无裁剪图且无原图）: {filename}")
                 continue
 
         if cropped_image_available and cropped_image_url:
