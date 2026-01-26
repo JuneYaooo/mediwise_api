@@ -193,12 +193,13 @@ class JsonUtils:
             return False
 
     @staticmethod
-    def extract_json_from_text(text: str) -> Optional[str]:
+    def extract_json_from_text(text: str, debug=False) -> Optional[str]:
         """
         从文本中提取JSON字符串
 
         Args:
             text: 可能包含JSON的文本
+            debug: 是否输出调试信息
 
         Returns:
             提取的JSON字符串，如果未找到则返回None
@@ -210,9 +211,12 @@ class JsonUtils:
         # 先尝试整个文本是否是有效的JSON
         try:
             json.loads(text)
+            if debug:
+                print(f"\033[92m[JSON提取] 整个文本就是有效JSON，长度: {len(text)}\033[0m")
             return text
         except:
-            pass
+            if debug:
+                print(f"\033[93m[JSON提取] 整个文本不是有效JSON，尝试提取...\033[0m")
 
         # 🆕 优先处理 markdown 代码块（LLM常见输出格式）
         # 匹配 ```json ... ``` 或 ``` ... ```
@@ -271,10 +275,32 @@ class JsonUtils:
         # 按长度从大到小排序候选项（更长的JSON更有可能是完整的）
         json_candidates.sort(key=len, reverse=True)
 
+        if debug and json_candidates:
+            print(f"\033[93m[JSON提取] 找到 {len(json_candidates)} 个候选JSON，最长: {len(json_candidates[0])}字符\033[0m")
+
         # 尝试解析每个候选项
-        for candidate in json_candidates:
+        for idx, candidate in enumerate(json_candidates):
             try:
-                json.loads(candidate)
+                parsed = json.loads(candidate)
+                if debug:
+                    print(f"\033[92m[JSON提取] 候选项{idx+1}解析成功，长度: {len(candidate)}字符\033[0m")
+                    print(f"\033[92m[JSON提取] 解析结果类型: {type(parsed)}, 顶层键: {list(parsed.keys()) if isinstance(parsed, dict) else 'N/A'}\033[0m")
+
+                # 🆕 优先返回包含特定字段的JSON（避免提取到内层JSON）
+                # 如果是字典类型，检查是否包含常见的顶层字段
+                if isinstance(parsed, dict):
+                    # 如果包含timeline_id或data_blocks，很可能是完整的时间轴详细数据
+                    if 'timeline_id' in parsed or 'data_blocks' in parsed:
+                        if debug:
+                            print(f"\033[92m[JSON提取] 候选项{idx+1}包含timeline_id/data_blocks字段，优先返回\033[0m")
+                        return candidate
+                    # 如果包含patient_info或timeline，很可能是完整的患者数据
+                    elif 'patient_info' in parsed or 'timeline' in parsed:
+                        if debug:
+                            print(f"\033[92m[JSON提取] 候选项{idx+1}包含patient_info/timeline字段，优先返回\033[0m")
+                        return candidate
+
+                # 如果没有特定字段，返回第一个成功解析的（最长的）
                 return candidate
             except:
                 # 尝试修复并验证
@@ -282,6 +308,8 @@ class JsonUtils:
                 if fixed:
                     try:
                         json.loads(fixed)
+                        if debug:
+                            print(f"\033[92m[JSON提取] 候选项{idx+1}修复后解析成功\033[0m")
                         return fixed
                     except:
                         pass
@@ -378,8 +406,9 @@ class JsonUtils:
         except ValueError as e:
             print(f"\033[91m[{debug_prefix}JSON解析错误] {str(e)}\033[0m")
 
-            # 尝试从文本中提取JSON
-            json_str = JsonUtils.extract_json_from_text(input_data)
+            # 尝试从文本中提取JSON（启用调试模式）
+            enable_debug = "Timeline details" in debug_prefix  # 只对时间轴详细数据启用调试
+            json_str = JsonUtils.extract_json_from_text(input_data, debug=enable_debug)
             if json_str:
                 try:
                     result = JsonUtils.parse_json(json_str, fix_format=True)

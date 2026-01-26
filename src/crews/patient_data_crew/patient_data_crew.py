@@ -878,6 +878,9 @@ class PatientDataCrew():
                         # 🆕 记录LLM原始返回结果（截取前500字符）
                         logger.info(f"  条目 {timeline_id} LLM原始返回结果（前500字符）: {str(detail_result)[:500]}")
 
+                        # 🆕 记录LLM返回结果的类型
+                        logger.info(f"  条目 {timeline_id} LLM返回结果类型: {type(detail_result)}")
+
                         # 解析详细数据
                         detail_data = JsonUtils.safe_parse_json(detail_result, debug_prefix=f"Timeline details for {timeline_id}")
                         if detail_data:
