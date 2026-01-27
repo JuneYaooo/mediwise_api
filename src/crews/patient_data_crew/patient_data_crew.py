@@ -334,7 +334,7 @@ class PatientDataCrew():
             max_execution_time=1800  # 30 minutes timeout (30 * 60 = 1800 seconds)
         )
 
-    def get_structured_patient_data(self, patient_info, patient_timeline, messages, files, agent_session_id, existing_patient_data=None):
+    def get_structured_patient_data(self, patient_info, patient_timeline, messages, files, agent_session_id, existing_patient_data=None, patient_id=None):
         """
         Process patient information into a structured timeline with detailed categorized information.
         支持增量更新：如果存在现有患者数据，将新信息与现有信息合并更新。
@@ -346,6 +346,7 @@ class PatientDataCrew():
             files (list): List of file objects with their content
             agent_session_id (str): The session ID for the agent
             existing_patient_data (dict): 现有患者数据，包含timeline、journey、mdt_report等
+            patient_id (str): 患者ID，用于更新患者疾病名称
         Returns:
             dict: Structured patient data with timeline and categorized details
         """
@@ -357,13 +358,14 @@ class PatientDataCrew():
             messages=messages,
             files=files,
             agent_session_id=agent_session_id,
-            existing_patient_data=existing_patient_data
+            existing_patient_data=existing_patient_data,
+            patient_id=patient_id
         ):
             if progress_data.get("type") == "result":
                 result = progress_data.get("data")
         return result if result else {"error": "No result returned"}
 
-    def get_structured_patient_data_stream(self, patient_info, patient_timeline, messages, files, agent_session_id, existing_patient_data=None):
+    def get_structured_patient_data_stream(self, patient_info, patient_timeline, messages, files, agent_session_id, existing_patient_data=None, patient_id=None):
         """
         Process patient information into a structured timeline (generator version).
         实时返回处理进度和最终结果。
@@ -375,6 +377,7 @@ class PatientDataCrew():
             files (list): List of file objects with their content
             agent_session_id (str): The session ID for the agent
             existing_patient_data (dict): 现有患者数据，包含timeline、journey、mdt_report等
+            patient_id (str): 患者ID，用于更新患者疾病名称
 
         Yields:
             dict: Progress updates or final result
@@ -754,6 +757,73 @@ class PatientDataCrew():
 
             # 发送疾病配置识别完成进度
             yield {"type": "progress", "stage": "disease_config_completed", "message": "疾病配置识别完成", "progress": 45}
+
+            # ========== 阶段2.5: 存储患者疾病名称到数据库 ==========
+            if patient_id and disease_config_data and disease_config_data.get('configs'):
+                try:
+                    logger.info("-" * 80)
+                    logger.info("【阶段2.5】开始存储患者疾病名称到数据库")
+                    logger.info("-" * 80)
+
+                    # 提取疾病名称列表
+                    disease_names = []
+                    for config in disease_config_data['configs']:
+                        disease_name = config.get('disease_name')
+                        if disease_name:
+                            disease_names.append(disease_name)
+
+                    if disease_names:
+                        disease_names_str = ','.join(disease_names)
+                        logger.info(f"识别到的疾病名称: {disease_names_str}")
+
+                        # 更新患者表的 disease_names 字段
+                        from app.db.database import SessionLocal
+                        from app.models.bus_models import Patient
+
+                        db = SessionLocal()
+                        try:
+                            patient = db.query(Patient).filter(Patient.patient_id == patient_id).first()
+                            if patient:
+                                # 合并新旧疾病名称，避免覆盖
+                                existing_diseases = set()
+                                if patient.disease_names:
+                                    existing_diseases = set(d.strip() for d in patient.disease_names.split(',') if d.strip())
+
+                                # 添加新识别的疾病
+                                new_diseases = set(disease_names)
+                                all_diseases = existing_diseases | new_diseases
+
+                                # 更新患者疾病名称
+                                patient.disease_names = ','.join(sorted(all_diseases))
+                                db.commit()
+
+                                if existing_diseases:
+                                    logger.info(f"✅ 患者疾病名称已更新（合并）: {patient.disease_names}")
+                                    logger.info(f"   原有: {','.join(sorted(existing_diseases))}")
+                                    logger.info(f"   新增: {','.join(sorted(new_diseases - existing_diseases))}")
+                                else:
+                                    logger.info(f"✅ 患者疾病名称已存储到数据库: {patient.disease_names}")
+                            else:
+                                logger.warning(f"⚠️ 未找到患者ID: {patient_id}")
+                        except Exception as db_error:
+                            logger.error(f"❌ 更新患者疾病名称时数据库错误: {db_error}")
+                            db.rollback()
+                        finally:
+                            db.close()
+                    else:
+                        logger.info("未识别到有效的疾病名称，跳过存储")
+
+                    logger.info("-" * 80)
+                    logger.info("【阶段2.5】患者疾病名称存储完成")
+                    logger.info("-" * 80)
+                except Exception as e:
+                    logger.error(f"存储患者疾病名称时出错: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+            elif not patient_id:
+                logger.info("未提供 patient_id，跳过疾病名称存储")
+            else:
+                logger.info("未识别到疾病配置，跳过疾病名称存储")
 
             # ========== 阶段3: 患者数据处理（时间轴生成 - 分层处理） ==========
             patient_data_processing_start_time = time.time()

@@ -415,7 +415,7 @@ class PPTGenerationCrew():
         )
 
     def generate_ppt(self, patient_timeline, patient_journey, raw_files_data, agent_session_id,
-                     auth_token=None, template_id="medical", filter_no_cropped_image=True):
+                     auth_token=None, template_id="medical", filter_no_cropped_image=True, patient_id=None):
         """
         Generate PPT from patient data (增强版 - 支持自动压缩和分块处理)
 
@@ -428,6 +428,7 @@ class PPTGenerationCrew():
         - 智能数据压缩
         - 分块处理超大数据集
         - 输出完整性保护
+        - 动态获取PPT模板类型（根据患者疾病）
 
         Args:
             patient_timeline (dict or list): Patient timeline data for PPT content generation
@@ -437,6 +438,7 @@ class PPTGenerationCrew():
             auth_token (str, optional): Bearer token for Suvalue API authentication (Suvalue模式必需)
             template_id (str, optional): PPT template ID for local generation (本地模式必需, default: "medical")
             filter_no_cropped_image (bool, optional): 是否过滤掉cropped_image_available为false的文件，默认True
+            patient_id (str, optional): 患者ID，用于动态获取PPT模板类型
 
         Returns:
             dict: PPT info
@@ -444,6 +446,52 @@ class PPTGenerationCrew():
                 - 本地模式: {"success": bool, "local_path": str, "file_uuid": str, "qiniu_url": str}
         """
         try:
+            # ========== 动态获取PPT模板类型 ==========
+            template_type = 2  # 默认值
+            if patient_id:
+                try:
+                    from app.db.database import SessionLocal
+                    from app.models.bus_models import ClinicalConfig, Patient
+
+                    db = SessionLocal()
+                    try:
+                        # 从患者表获取疾病名称
+                        patient = db.query(Patient).filter(Patient.patient_id == patient_id).first()
+                        if patient and patient.disease_names and patient.disease_names.strip():
+                            # 取第一个疾病名称（如果有多个疾病，使用主要疾病的模板）
+                            all_diseases = [d.strip() for d in patient.disease_names.split(',') if d.strip()]
+                            if all_diseases:
+                                disease_name = all_diseases[0]
+
+                                if len(all_diseases) > 1:
+                                    logger.info(f"患者有多个疾病: {patient.disease_names}")
+                                    logger.info(f"使用主要疾病的PPT模板: {disease_name}")
+                                else:
+                                    logger.info(f"从患者表获取疾病名称: {disease_name}")
+
+                                # 从数据库查询配置
+                                config = db.query(ClinicalConfig).filter(
+                                    ClinicalConfig.disease_name == disease_name,
+                                    ClinicalConfig.is_active == True,
+                                    ClinicalConfig.is_deleted == False
+                                ).first()
+
+                                if config and config.ppt_type:
+                                    template_type = config.ppt_type
+                                    logger.info(f"✅ 从数据库获取PPT模板类型: {template_type} (疾病: {disease_name})")
+                                else:
+                                    logger.warning(f"⚠️ 数据库中未找到疾病 '{disease_name}' 的PPT模板配置，使用默认值: {template_type}")
+                        else:
+                            logger.warning(f"⚠️ 患者 {patient_id} 未设置疾病名称，使用默认PPT模板类型: {template_type}")
+                    finally:
+                        db.close()
+                except Exception as e:
+                    logger.error(f"❌ 获取PPT模板类型时出错，使用默认值 {template_type}: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+            else:
+                logger.info(f"未提供 patient_id，使用默认PPT模板类型: {template_type}")
+
             # ========== 初始化Token管理和数据压缩模块 ==========
             token_manager = TokenManager(logger=logger)
             data_compressor = PatientDataCompressor(logger=logger, token_manager=token_manager)
@@ -768,8 +816,8 @@ class PPTGenerationCrew():
                 try:
                     logger.info("开始处理患者治疗数据（仅提取数据，不生成图片）...")
 
-                    # 初始化治疗数据处理器
-                    treatment_processor = TreatmentDataProcessor()
+                    # 初始化治疗数据处理器（传入patient_id以从数据库获取配置）
+                    treatment_processor = TreatmentDataProcessor(patient_id=patient_id)
 
                     # 从patient_timeline或patient_journey中提取治疗数据
                     # 优先使用patient_timeline，如果没有则使用patient_journey
@@ -988,7 +1036,7 @@ class PPTGenerationCrew():
                     indicator_chart_images=indicator_chart_images,
                     treatment_gantt_chart_url=treatment_gantt_chart_url,
                     treatment_gantt_data=gantt_data if 'gantt_data' in locals() else None,
-                    template_type=2,
+                    template_type=template_type,  # 使用动态获取的模板类型
                     use_chunked_output=use_chunked_output  # 传递分块输出标志
                 )
 
@@ -998,7 +1046,7 @@ class PPTGenerationCrew():
                 # 2. 直接调用工具生成PPT
                 logger.info("调用SuvalueGeneratePPTTool生成PPT...")
                 ppt_tool = SuvalueGeneratePPTTool()
-                ppt_info = ppt_tool._run(template_type=2, ppt_data=ppt_data)
+                ppt_info = ppt_tool._run(template_type=template_type, ppt_data=ppt_data)  # 使用动态获取的模板类型
 
                 if ppt_info and ppt_info.get("success"):
                     logger.info(f"✅ 直接LLM调用流程成功: ppt_url={ppt_info.get('ppt_url')}")

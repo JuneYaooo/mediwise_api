@@ -16,20 +16,146 @@ logger = BeijingLogger().get_logger()
 class TreatmentDataProcessor:
     """治疗数据处理器"""
 
-    def __init__(self, config_path: str = "./app/config/treatment_config.xlsx"):
+    def __init__(self, config_path: str = "./app/config/treatment_config.xlsx", disease_name: str = None, patient_id: str = None):
         """
         初始化处理器
 
         Args:
-            config_path: 治疗配置Excel文件路径
+            config_path: 治疗配置Excel文件路径（已废弃，保留用于向后兼容）
+            disease_name: 疾病名称，用于从数据库查询配置
+            patient_id: 患者ID，用于从患者表获取疾病名称
         """
         self.config_path = Path(config_path)
+        self.disease_name = disease_name
+        self.patient_id = patient_id
         self.treatment_config = None
         self.llm_extractor = None  # 延迟初始化
         self._load_config()
 
     def _load_config(self):
-        """加载治疗配置文件"""
+        """加载治疗配置 - 优先从数据库加载，降级到Excel文件"""
+        try:
+            # 优先尝试从数据库加载配置
+            if self._load_config_from_database():
+                logger.info("✅ 成功从数据库加载治疗配置")
+                return
+
+            # 降级：从Excel文件加载（向后兼容）
+            logger.info("⚠️ 数据库配置加载失败，尝试从Excel文件加载")
+            self._load_config_from_excel()
+
+        except Exception as e:
+            logger.error(f"加载治疗配置失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
+    def _load_config_from_database(self) -> bool:
+        """
+        从数据库加载治疗配置
+
+        Returns:
+            bool: 是否成功加载
+        """
+        try:
+            from app.db.database import SessionLocal
+            from app.models.bus_models import ClinicalConfig, Patient
+
+            db = SessionLocal()
+            try:
+                # 确定疾病名称
+                disease_name = self.disease_name
+
+                # 如果没有提供疾病名称，尝试从患者ID获取
+                if not disease_name and self.patient_id:
+                    patient = db.query(Patient).filter(Patient.patient_id == self.patient_id).first()
+                    if patient and patient.disease_names and patient.disease_names.strip():
+                        # 取第一个疾病名称
+                        disease_name = patient.disease_names.split(',')[0].strip()
+                        logger.info(f"从患者表获取疾病名称: {disease_name}")
+
+                if not disease_name:
+                    logger.warning("未提供疾病名称且无法从患者表获取，无法从数据库加载配置")
+                    return False
+
+                # 从数据库查询配置
+                config = db.query(ClinicalConfig).filter(
+                    ClinicalConfig.disease_name == disease_name,
+                    ClinicalConfig.is_active == True,
+                    ClinicalConfig.is_deleted == False
+                ).first()
+
+                if not config:
+                    logger.warning(f"数据库中未找到疾病 '{disease_name}' 的配置")
+                    return False
+
+                if not config.treatment_content:
+                    logger.warning(f"疾病 '{disease_name}' 的 treatment_content 为空")
+                    return False
+
+                # 解析 treatment_content（假设是JSON格式的配置列表）
+                import json
+                try:
+                    # 尝试解析为JSON
+                    treatment_data = json.loads(config.treatment_content)
+
+                    # 转换为内部配置格式
+                    self.treatment_config = []
+                    if isinstance(treatment_data, list):
+                        for item in treatment_data:
+                            config_item = {
+                                "category": item.get("治疗类别") or item.get("category"),
+                                "treatment_type": item.get("具体治疗方式") or item.get("treatment_type"),
+                                "methods_drugs": item.get("具体方法/药物（化学名 & 商品名）") or item.get("methods_drugs")
+                            }
+                            # 只添加有效配置
+                            if config_item["category"] or config_item["treatment_type"] or config_item["methods_drugs"]:
+                                self.treatment_config.append(config_item)
+                    elif isinstance(treatment_data, dict):
+                        # 如果是字典，尝试提取配置列表
+                        if "configs" in treatment_data:
+                            for item in treatment_data["configs"]:
+                                config_item = {
+                                    "category": item.get("治疗类别") or item.get("category"),
+                                    "treatment_type": item.get("具体治疗方式") or item.get("treatment_type"),
+                                    "methods_drugs": item.get("具体方法/药物（化学名 & 商品名）") or item.get("methods_drugs")
+                                }
+                                if config_item["category"] or config_item["treatment_type"] or config_item["methods_drugs"]:
+                                    self.treatment_config.append(config_item)
+                        else:
+                            # 如果字典本身就是一个配置项
+                            config_item = {
+                                "category": treatment_data.get("治疗类别") or treatment_data.get("category"),
+                                "treatment_type": treatment_data.get("具体治疗方式") or treatment_data.get("treatment_type"),
+                                "methods_drugs": treatment_data.get("具体方法/药物（化学名 & 商品名）") or treatment_data.get("methods_drugs")
+                            }
+                            if config_item["category"] or config_item["treatment_type"] or config_item["methods_drugs"]:
+                                self.treatment_config.append(config_item)
+
+                    logger.info(f"从数据库加载了 {len(self.treatment_config)} 条治疗配置（疾病: {disease_name}）")
+
+                    # 初始化 LLM 提取器
+                    self.llm_extractor = TreatmentExtractorLLM(treatment_config=self.treatment_config)
+                    logger.info("已将数据库治疗配置传递给大模型提取器")
+
+                    return True
+
+                except json.JSONDecodeError:
+                    # 如果不是JSON格式，尝试作为纯文本处理
+                    logger.info(f"treatment_content 不是JSON格式，作为纯文本处理")
+                    # 可以在这里添加纯文本解析逻辑
+                    return False
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            logger.error(f"从数据库加载治疗配置时出错: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False
+
+    def _load_config_from_excel(self):
+        """从Excel文件加载治疗配置（向后兼容）"""
         try:
             if not self.config_path.exists():
                 logger.error(f"治疗配置文件不存在: {self.config_path}")
@@ -316,16 +442,18 @@ class TreatmentDataProcessor:
         return gantt_data_sorted
 
 
-def process_patient_treatments_for_gantt(patient_data: Any, config_path: str = "./app/config/treatment_config.xlsx") -> List[Dict[str, Any]]:
+def process_patient_treatments_for_gantt(patient_data: Any, config_path: str = "./app/config/treatment_config.xlsx", disease_name: str = None, patient_id: str = None) -> List[Dict[str, Any]]:
     """
     便捷函数：处理患者治疗数据生成甘特图数据
 
     Args:
         patient_data: 患者数据
-        config_path: 治疗配置文件路径
+        config_path: 治疗配置文件路径（已废弃，保留用于向后兼容）
+        disease_name: 疾病名称，用于从数据库查询配置
+        patient_id: 患者ID，用于从患者表获取疾病名称
 
     Returns:
         甘特图数据列表
     """
-    processor = TreatmentDataProcessor(config_path)
+    processor = TreatmentDataProcessor(config_path=config_path, disease_name=disease_name, patient_id=patient_id)
     return processor.process_patient_treatments(patient_data)

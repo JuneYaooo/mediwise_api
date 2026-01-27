@@ -36,6 +36,7 @@ class Patient(Base):
     admission_date = Column(TIMESTAMP, nullable=True)
     discharge_date = Column(TIMESTAMP, nullable=True)
     raw_file_ids = Column(Text, nullable=True, comment="原始上传文件ID列表（JSON数组格式）")
+    disease_names = Column(String(500), nullable=True, comment="患者疾病名称，多个疾病用逗号分隔")
     created_by = Column(String(50), nullable=False)
     created_at = Column(TIMESTAMP, nullable=False, default=get_beijing_now_naive)
     updated_at = Column(TIMESTAMP, nullable=False, default=get_beijing_now_naive, onupdate=get_beijing_now_naive)
@@ -232,3 +233,20 @@ class SysUser(Base):
     updated_by = Column(BigInteger, nullable=False)
     updated_at = Column(TIMESTAMP, nullable=False, default=get_beijing_now_naive, onupdate=get_beijing_now_naive)
     is_deleted = Column(Boolean, nullable=False, default=False)
+
+
+class ClinicalConfig(Base):
+    """临床配置表 - 映射到 bus_clinical_config"""
+    __tablename__ = "bus_clinical_config"
+
+    disease_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    disease_name = Column(String(100), nullable=False, index=True, comment="疾病名称")
+    disease_content = Column(Text, nullable=True, comment="疾病内容描述（对应原 dashboard_description）")
+    treatment_content = Column(Text, nullable=True, comment="治疗方案内容")
+    ppt_type = Column(Integer, nullable=True, comment="PPT模板类型")
+    ppt_config = Column(JSON, nullable=True, comment="PPT配置信息")
+    created_by = Column(String(50), nullable=True)
+    created_at = Column(TIMESTAMP, nullable=False, default=get_beijing_now_naive)
+    updated_at = Column(TIMESTAMP, nullable=False, default=get_beijing_now_naive, onupdate=get_beijing_now_naive)
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    is_active = Column(Boolean, nullable=False, default=True, comment="是否激活")

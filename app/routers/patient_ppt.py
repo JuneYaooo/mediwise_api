@@ -120,7 +120,8 @@ async def generate_ppt_for_patient(
             raw_files_data=raw_files_data,
             agent_session_id=patient_id,  # 使用 patient_id 作为 session_id
             template_id="medical",
-            filter_no_cropped_image=True
+            filter_no_cropped_image=True,
+            patient_id=patient_id  # 传入患者ID用于动态获取模板类型
         )
 
         # 7. 检查生成结果

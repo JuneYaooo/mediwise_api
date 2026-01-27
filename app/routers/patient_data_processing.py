@@ -223,7 +223,8 @@ def process_patient_data_background_from_task(task_id: str):
             messages=[],
             files=files_to_pass,
             agent_session_id=conversation_id,
-            existing_patient_data=None  # 首次创建，无现有数据
+            existing_patient_data=None,  # 首次创建，无现有数据
+            patient_id=patient.patient_id if patient else None  # 传入患者ID
         ):
             if progress_data.get("type") == "progress":
                 # 更新任务进度
@@ -579,7 +580,8 @@ async def smart_stream_patient_data_processing(
             messages=[],
             files=files_to_pass,
             agent_session_id=conversation_id,
-            existing_patient_data=None  # 首次创建，无现有数据
+            existing_patient_data=None,  # 首次创建，无现有数据
+            patient_id=patient.patient_id if patient else None  # 传入患者ID
         ):
             if progress_data.get("type") == "progress":
                 # 同时做两件事：

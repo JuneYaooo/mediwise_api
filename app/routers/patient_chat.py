@@ -388,7 +388,8 @@ async def _process_update_data(
                     messages=[],  # 不需要历史消息
                     files=files_to_pass,
                     agent_session_id=conversation_id,
-                    existing_patient_data=existing_patient_data
+                    existing_patient_data=existing_patient_data,
+                    patient_id=patient_id  # 传入患者ID
                 )
             
             with ThreadPoolExecutor() as executor:
