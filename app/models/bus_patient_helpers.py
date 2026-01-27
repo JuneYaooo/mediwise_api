@@ -787,6 +787,9 @@ class BusPatientHelper:
                 "exam_date": f.exam_date.isoformat() if f.exam_date else None,
                 "exam_type": f.exam_type,
                 "has_medical_image": f.has_medical_image,
+                # 医学影像相关字段
+                "image_bbox": f.image_bbox,
+                "cropped_image_uuid": f.cropped_image_uuid,
                 "cropped_image_url": f.cropped_image_url,
                 "cropped_image_available": f.cropped_image_available,
                 # 新增：来源信息

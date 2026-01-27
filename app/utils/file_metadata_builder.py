@@ -321,6 +321,7 @@ class FileMetadataBuilder:
                 "cleanup_temp_dir": extracted.get('cleanup_temp_dir'),
 
                 # 裁剪医学影像信息
+                "image_bbox": extracted.get('image_bbox'),  # 🔧 修复：添加边界框字段
                 "cropped_image_uuid": extracted.get('cropped_image_uuid'),
                 "cropped_image_path": extracted.get('cropped_image_path'),
                 "cropped_image_filename": extracted.get('cropped_image_filename'),

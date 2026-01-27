@@ -448,16 +448,21 @@ class FileProcessingManager:
             return
 
         try:
-            import uuid
-            # 生成裁剪图片的UUID和key
-            cropped_uuid = str(uuid.uuid4())
+            # 🔧 修复：使用已有的 cropped_image_uuid，如果没有才生成新的
+            cropped_uuid = image_file.get('cropped_image_uuid')
+            if not cropped_uuid:
+                import uuid
+                cropped_uuid = str(uuid.uuid4())
+                image_file['cropped_image_uuid'] = cropped_uuid
+                logger.warning(f"裁剪图片缺少UUID，已生成新UUID: {cropped_uuid}")
+
             original_filename = image_file.get('file_name', 'image')
             base_name = os.path.splitext(original_filename)[0]
             cropped_filename = f"cropped_{base_name}.jpg"
 
             qiniu_key = f"{conversation_id}/cropped/{cropped_uuid}.jpg"
 
-            logger.info(f"上传裁剪图片: {cropped_filename} -> {qiniu_key}")
+            logger.info(f"上传裁剪图片: {cropped_filename} -> {qiniu_key} (UUID: {cropped_uuid})")
 
             # 上传到七牛云
             success, cloud_url, error = self.upload_service.upload_file(
@@ -466,9 +471,10 @@ class FileProcessingManager:
             )
 
             if success:
-                # 更新原文件信息，添加裁剪图片URL
+                # 更新原文件信息，添加裁剪图片URL和UUID
                 image_file['cropped_image_url'] = cloud_url
-                logger.info(f"裁剪图片上传成功: {cloud_url}")
+                image_file['cropped_image_uuid'] = cropped_uuid  # 🔧 确保UUID被保存
+                logger.info(f"裁剪图片上传成功: {cloud_url}, UUID: {cropped_uuid}")
 
                 # 清理临时文件
                 try:
