@@ -142,7 +142,20 @@ class FileContentExtractor:
             "file_preview": file_preview,
             "file_content": file_content,
             "extracted_text": file_content,
-            "extraction_time": extraction_time
+            "extraction_time": extraction_time,
+
+            # 🔧 修复：传递医学影像相关字段（从extraction_result获取）
+            "image_bbox": extraction_result.get('image_bbox') if isinstance(extraction_result, dict) else None,
+            "cropped_image_uuid": extraction_result.get('cropped_image_uuid') if isinstance(extraction_result, dict) else None,
+            "cropped_image_path": extraction_result.get('cropped_image_path') if isinstance(extraction_result, dict) else None,
+            "cropped_image_filename": extraction_result.get('cropped_image_filename') if isinstance(extraction_result, dict) else None,
+            "cropped_image_available": extraction_result.get('cropped_image_available', False) if isinstance(extraction_result, dict) else False,
+            "cropped_temp_dir": extraction_result.get('cropped_temp_dir') if isinstance(extraction_result, dict) else None,
+
+            # 🔧 修复：传递提取状态字段
+            "extraction_success": extraction_result.get('extraction_success') if isinstance(extraction_result, dict) else None,
+            "extraction_error": extraction_result.get('extraction_error') if isinstance(extraction_result, dict) else None,
+            "extraction_failed": extraction_result.get('extraction_failed', False) if isinstance(extraction_result, dict) else False
         }
 
         logger.info(f"✅ ========== 文件内容提取完成 ==========")

@@ -317,7 +317,7 @@ class FileProcessingManager:
         self._upload_pdf_images(pdf_extracted_images, conversation_id)
 
         # 处理其他文件上传
-        self._upload_other_files(other_files)
+        self._upload_other_files(other_files, conversation_id)
 
         # 重新组装结果
         final_results = zip_files + pdf_files + sub_files + pdf_extracted_images + other_files
@@ -494,7 +494,7 @@ class FileProcessingManager:
             image_file['cropped_image_available'] = False
 
 
-    def _upload_other_files(self, other_files: List[Dict]) -> None:
+    def _upload_other_files(self, other_files: List[Dict], conversation_id: str) -> None:
         """上传其他文件"""
         for other_file in other_files:
             if other_file.get('cloud_storage_url') and other_file.get('uploaded_to_qiniu'):
@@ -526,12 +526,10 @@ class FileProcessingManager:
                     other_file['upload_method'] = 'direct_original_file'
                     logger.info(f"✅ 非zip文件上传成功: {other_file_name} -> {cloud_url}")
 
-                    # 如果是图片且有裁剪的医学影像，也上传
+                    # 🔧 修复：如果是图片且有裁剪的医学影像，也上传（使用正确的conversation_id）
                     if file_ext.lower() in ['.png', '.jpg', '.jpeg', '.webp', '.heic', '.heif']:
                         if other_file.get('cropped_image_available') and other_file.get('cropped_image_path'):
-                            # 使用会话ID作为conversation_id（从qiniu_key中提取或使用默认值）
-                            conversation_id_for_crop = other_file_uuid.split('/')[0] if '/' in str(other_file_uuid) else 'default'
-                            self._upload_cropped_image(other_file, conversation_id_for_crop)
+                            self._upload_cropped_image(other_file, conversation_id)
                 else:
                     logger.error(f"❌ 非zip文件上传失败: {other_file_name}, 错误: {error}")
                     other_file['upload_failed'] = True
