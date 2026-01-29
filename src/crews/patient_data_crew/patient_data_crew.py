@@ -1373,6 +1373,17 @@ class PatientDataCrew():
                     else:
                         logger.warning("指标序列解析结果格式不正确")
                         indicator_series_result = []
+
+                    # 🆕 过滤掉空指标：移除 series 为空或没有数据点的指标
+                    if isinstance(indicator_series_result, list):
+                        original_count = len(indicator_series_result)
+                        indicator_series_result = [
+                            indicator for indicator in indicator_series_result
+                            if indicator.get("series") and len(indicator.get("series", [])) > 0
+                        ]
+                        filtered_count = len(indicator_series_result)
+                        if filtered_count < original_count:
+                            logger.info(f"过滤掉 {original_count - filtered_count} 个空指标，剩余 {filtered_count} 个有效指标")
                 else:
                     logger.warning("指标序列解析结果为空")
                     indicator_series_result = []
