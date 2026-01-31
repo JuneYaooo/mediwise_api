@@ -327,6 +327,9 @@ class FileContentExtractor:
         content_sample = file_content[:2000] if len(file_content) > 2000 else file_content
         logger.info(f"用于AI分析的内容长度: {len(content_sample)} 字符")
 
+        # 🚨 修复：将json导入移到try块外，避免在except中使用未定义的变量
+        import json as json_lib
+
         # 重试机制：最多重试3次
         max_retries = 3
         for attempt in range(max_retries):
@@ -389,7 +392,6 @@ class FileContentExtractor:
 
                 logger.info(f"文件类型判断 API调用成功: {file_name}")
 
-                import json as json_lib
                 response_content = response.choices[0].message.content
 
                 # 🚨 调试：打印原始响应内容
