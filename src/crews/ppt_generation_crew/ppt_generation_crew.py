@@ -284,6 +284,20 @@ class PPTGenerationCrew():
 
 **任务**: 根据下面的模板字段说明和患者数据，生成符合模板要求的JSON数据。
 
+**重要：输出格式要求**
+- 必须输出完整的JSON对象，顶层必须包含 "pptTemplate2Vm" 字段
+- 输出格式示例：
+```json
+{{
+  "pptTemplate2Vm": {{
+    "title": "...",
+    "patient": {{...}},
+    "diag": {{...}},
+    ...其他字段
+  }}
+}}
+```
+
 **模板字段说明**（包含注释说明每个字段的用途）:
 {template_json_str}
 
@@ -298,7 +312,7 @@ class PPTGenerationCrew():
 - 治疗甘特图: {treatment_gantt_chart_url or "未生成"}
 
 **重要要求**:
-1. 严格按照模板结构输出，不要添加或删除字段
+1. 严格按照模板结构输出，顶层必须包含 "pptTemplate2Vm" 字段
 2. 只使用患者数据中真实存在的信息，不要编造
 3. 对于医学原始文件的图像，从[原始文件数据]中选择has_medical_image=true的图片（优先选择裁剪图）
 4. 治疗数据可从[治疗甘特图数据]中获取，其中source_file字段已是文件名（不是UUID）
@@ -363,13 +377,25 @@ class PPTGenerationCrew():
             # 验证是否包含pptTemplate2Vm字段
             if "pptTemplate2Vm" not in ppt_data:
                 logger.warning(f"  ⚠️ PPT数据缺少pptTemplate2Vm字段，当前顶层字段: {list(ppt_data.keys())}")
-                # 如果顶层就是pptTemplate2Vm的内容，包装一下
-                if any(key in ppt_data for key in ["title", "patient", "diag"]):
-                    logger.info("  ├─ 检测到顶层包含PPT字段，自动包装为pptTemplate2Vm结构")
+
+                # 🚨 增强自动包装逻辑：检测多种可能的PPT数据结构
+                # 1. 检查是否包含常见的PPT字段
+                common_ppt_fields = ["title", "patient", "diag", "patient_info", "timeline_data",
+                                    "medical_images", "charts", "slides", "content"]
+                has_ppt_fields = any(key in ppt_data for key in common_ppt_fields)
+
+                # 2. 检查是否是纯数据字典（没有success/error等元数据字段）
+                metadata_fields = ["success", "error", "message", "status", "code"]
+                is_pure_data = not any(key in ppt_data for key in metadata_fields)
+
+                if has_ppt_fields or (is_pure_data and len(ppt_data) > 0):
+                    logger.info("  ├─ 检测到PPT数据结构，自动包装为pptTemplate2Vm")
+                    logger.info(f"  ├─ 检测到的字段: {list(ppt_data.keys())[:10]}")
                     ppt_data = {"pptTemplate2Vm": ppt_data}
                     logger.info("  └─ ✅ 自动包装成功")
                 else:
                     logger.error("  └─ ❌ 无法识别PPT数据结构")
+                    logger.error(f"  └─ 数据内容预览: {str(ppt_data)[:500]}")
                     return None
 
             logger.info("=" * 100)

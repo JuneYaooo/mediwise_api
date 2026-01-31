@@ -298,6 +298,84 @@ class ExtractContentFromPathTool(BaseTool):
             logger.error(f"HEIC转换失败: {str(e)}")
             return None
 
+    def compress_image_if_needed(self, image_path, max_size_mb=7.5):
+        """
+        压缩图片以满足API的data-uri限制（10MB）
+
+        Args:
+            image_path: 图片路径
+            max_size_mb: 最大文件大小（MB），默认7.5MB（base64后约10MB）
+
+        Returns:
+            压缩后的图片路径（如果无需压缩则返回原路径）
+        """
+        try:
+            # 计算原始大小
+            original_size = os.path.getsize(image_path)
+
+            # base64编码后大小约为原始的1.33倍
+            estimated_base64_size = original_size * 1.33
+            max_bytes = max_size_mb * 1024 * 1024
+
+            if estimated_base64_size <= max_bytes:
+                return image_path  # 无需压缩
+
+            logger.info(f"图片过大({original_size/1024/1024:.1f}MB，base64后约{estimated_base64_size/1024/1024:.1f}MB)，开始压缩...")
+
+            # 打开图片
+            img = Image.open(image_path)
+
+            # 计算压缩比例（基于面积）
+            scale = (max_bytes / estimated_base64_size) ** 0.5
+            new_width = int(img.width * scale)
+            new_height = int(img.height * scale)
+
+            logger.info(f"压缩尺寸: {img.width}x{img.height} -> {new_width}x{new_height} (缩放比例: {scale:.2f})")
+
+            # 压缩图片
+            img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+            # 创建临时文件
+            import tempfile
+            temp_dir = tempfile.mkdtemp(prefix=f"compressed_images_{uuid.uuid4().hex[:8]}_")
+            filename = os.path.basename(image_path)
+            base_name = os.path.splitext(filename)[0]
+            temp_path = os.path.join(temp_dir, f"{base_name}_compressed.jpg")
+
+            # 转换为RGB模式（如果需要）
+            if img_resized.mode in ('RGBA', 'LA', 'P'):
+                background = Image.new('RGB', img_resized.size, (255, 255, 255))
+                if img_resized.mode == 'P':
+                    img_resized = img_resized.convert('RGBA')
+                background.paste(img_resized, mask=img_resized.split()[-1] if img_resized.mode == 'RGBA' else None)
+                img_resized = background
+            elif img_resized.mode != 'RGB':
+                img_resized = img_resized.convert('RGB')
+
+            # 保存压缩后的图片
+            img_resized.save(temp_path, 'JPEG', quality=85, optimize=True)
+
+            compressed_size = os.path.getsize(temp_path)
+            estimated_compressed_base64 = compressed_size * 1.33
+
+            logger.info(f"压缩完成: {original_size/1024/1024:.1f}MB -> {compressed_size/1024/1024:.1f}MB "
+                       f"(base64后约{estimated_compressed_base64/1024/1024:.1f}MB)")
+
+            # 如果压缩后仍然过大，进一步降低质量
+            if estimated_compressed_base64 > max_bytes:
+                logger.warning(f"首次压缩后仍过大，降低质量重新压缩...")
+                quality = int(85 * (max_bytes / estimated_compressed_base64))
+                quality = max(60, min(quality, 85))  # 质量范围60-85
+                img_resized.save(temp_path, 'JPEG', quality=quality, optimize=True)
+                compressed_size = os.path.getsize(temp_path)
+                logger.info(f"二次压缩完成(质量={quality}): {compressed_size/1024/1024:.1f}MB")
+
+            return temp_path
+
+        except Exception as e:
+            logger.error(f"图片压缩失败: {str(e)}")
+            return image_path  # 压缩失败，返回原路径
+
     def read_image(self, path):
         """使用多模态模型提取图片内容描述"""
         try:
@@ -338,8 +416,10 @@ class ExtractContentFromPathTool(BaseTool):
             elif file_size > 20 * 1024 * 1024:  # 大于20MB
                 logger.warning(f"文件过大: {filename} ({file_size / 1024 / 1024:.1f}MB)")
                 result['file_content'] = f"图片文件: {filename} (文件过大: {file_size / 1024 / 1024:.1f}MB)"
+                result['extraction_success'] = False
+                result['extraction_error'] = f'文件过大({file_size / 1024 / 1024:.1f}MB)，超过20MB限制'
                 return result
-            
+
             # 检测实际图片格式
             actual_format = self.detect_image_format(path)
             original_path = path  # 保存原始路径
@@ -368,7 +448,20 @@ class ExtractContentFromPathTool(BaseTool):
                         logger.info(f"HEIC转换成功，使用转换后的文件进行处理")
                     else:
                         logger.error(f"HEIC转换失败，尝试直接处理原文件")
-                
+
+                # 🚨 新增：压缩图片以满足API的data-uri限制（10MB）
+                # base64编码后大小约为原始的1.33倍，所以原始文件应小于7.5MB
+                compressed_file = self.compress_image_if_needed(path, max_size_mb=7.5)
+                if compressed_file != path:
+                    # 如果进行了压缩，更新路径
+                    if converted_file:
+                        # 如果之前有HEIC转换，需要记录压缩文件以便清理
+                        converted_file = compressed_file
+                    else:
+                        converted_file = compressed_file
+                    path = compressed_file
+                    logger.info(f"图片已压缩，使用压缩后的文件: {os.path.basename(compressed_file)}")
+
                 # 使用实际格式确定MIME类型
                 format_to_mime = {
                     'png': 'image/png',

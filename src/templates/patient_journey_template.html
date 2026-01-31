@@ -4,11 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>患者时间旅程</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- 🚨 已移除Google Fonts引用，避免网络请求导致超时 -->
+    <!-- 使用本地内嵌字体（通过{{FONT_FACE_CSS}}注入） -->
     <style>
-        /* 如果有本地字体，使用本地字体 */
+        /* 本地字体（base64内嵌） */
         {{FONT_FACE_CSS}}
 
         * {
@@ -18,7 +17,8 @@
         }
 
         body {
-            font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "Source Han Sans SC", "Droid Sans Fallback", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+            /* 🚨 修改字体优先级：优先使用本地内嵌的CustomChinese字体 */
+            font-family: "CustomChinese", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "Source Han Sans SC", "Droid Sans Fallback", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
             background: transparent;
             padding: 0;
             margin: 0;
